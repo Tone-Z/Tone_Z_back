@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
-import mediapipe as mp
+import mediapipe.python.solutions.face_mesh as mp_face_mesh_module
 
 app = FastAPI()
 
@@ -534,7 +534,7 @@ async def diagnosis(file: UploadFile = File(...)):
     if image is None:
         return {"error": "이미지를 읽을 수 없습니다."}
 
-    mp_face_mesh = mp.solutions.face_mesh
+    mp_face_mesh = mp_face_mesh_module
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     with mp_face_mesh.FaceMesh(
