@@ -2,7 +2,16 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
-import mediapipe.python.solutions.face_mesh as mp_face_mesh_module
+import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
+
+_face_landmarker_options = mp_vision.FaceLandmarkerOptions(
+    base_options=mp_python.BaseOptions(model_asset_path="face_landmarker.task"),
+    num_faces=1,
+    min_face_detection_confidence=0.5,
+)
+_face_landmarker = mp_vision.FaceLandmarker.create_from_options(_face_landmarker_options)
 
 app = FastAPI()
 
@@ -534,81 +543,60 @@ async def diagnosis(file: UploadFile = File(...)):
     if image is None:
         return {"error": "이미지를 읽을 수 없습니다."}
 
-    mp_face_mesh = mp_face_mesh_module
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+    result = _face_landmarker.detect(mp_image)
 
-    with mp_face_mesh.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-    ) as face_mesh:
-        results = face_mesh.process(rgb_image)
+    if not result.face_landmarks:
+        return {"error": "얼굴 랜드마크 검출 실패"}
 
-        if not results.multi_face_landmarks:
-            return {"error": "얼굴 랜드마크 검출 실패"}
+    h, w, _ = image.shape
+    landmarks = result.face_landmarks[0]
 
-        h, w, _ = image.shape
-        face_landmarks = results.multi_face_landmarks[0]
-        landmarks = face_landmarks.landmark
+    left_cheek = landmarks[123]
+    right_cheek = landmarks[352]
+    forehead = landmarks[10]
 
-        left_cheek = landmarks[123]
-        right_cheek = landmarks[352]
-        forehead = landmarks[10]
+    left_x = int(left_cheek.x * w)
+    left_y = int(left_cheek.y * h)
+    right_x = int(right_cheek.x * w)
+    right_y = int(right_cheek.y * h)
+    forehead_x = int(forehead.x * w)
+    forehead_y = int(forehead.y * h)
 
-        left_x = int(left_cheek.x * w)
-        left_y = int(left_cheek.y * h)
-        right_x = int(right_cheek.x * w)
-        right_y = int(right_cheek.y * h)
-        forehead_x = int(forehead.x * w)
-        forehead_y = int(forehead.y * h)
+    left_color = get_avg_color(image, left_x, left_y)
+    right_color = get_avg_color(image, right_x, right_y)
+    forehead_color = get_avg_color(image, forehead_x, forehead_y, size=25)
 
-        left_color = get_avg_color(image, left_x, left_y)
-        right_color = get_avg_color(image, right_x, right_y)
-        forehead_color = get_avg_color(image, forehead_x, forehead_y, size=25)
+    avg_r = int(left_color["r"] * 0.4 + right_color["r"] * 0.4 + forehead_color["r"] * 0.2)
+    avg_g = int(left_color["g"] * 0.4 + right_color["g"] * 0.4 + forehead_color["g"] * 0.2)
+    avg_b = int(left_color["b"] * 0.4 + right_color["b"] * 0.4 + forehead_color["b"] * 0.2)
+    avg_hex = "#{:02X}{:02X}{:02X}".format(avg_r, avg_g, avg_b)
+    avg_lab = rgb_to_lab(avg_r, avg_g, avg_b)
+    avg_hsv = rgb_to_hsv(avg_r, avg_g, avg_b)
 
-        avg_r = int(left_color["r"] * 0.4 + right_color["r"] * 0.4 + forehead_color["r"] * 0.2)
-        avg_g = int(left_color["g"] * 0.4 + right_color["g"] * 0.4 + forehead_color["g"] * 0.2)
-        avg_b = int(left_color["b"] * 0.4 + right_color["b"] * 0.4 + forehead_color["b"] * 0.2)
-        avg_hex = "#{:02X}{:02X}{:02X}".format(avg_r, avg_g, avg_b)
-        avg_lab = rgb_to_lab(avg_r, avg_g, avg_b)
-        avg_hsv = rgb_to_hsv(avg_r, avg_g, avg_b)
+    eye_color = extract_eye_color(image, landmarks, w, h)
+    hair_color = extract_hair_color(image, landmarks, w, h)
+    skin_color = make_color(avg_r, avg_g, avg_b)
+    contrast_score, contrast_level = calculate_contrast(skin_color, eye_color, hair_color)
+    personal_color = analyze_personal_color(avg_r, avg_g, avg_b, eye_color, hair_color)
 
-        eye_color = extract_eye_color(image, landmarks, w, h)
-        hair_color = extract_hair_color(image, landmarks, w, h)
-        skin_color = make_color(avg_r, avg_g, avg_b)
-        contrast_score, contrast_level = calculate_contrast(skin_color, eye_color, hair_color)
-        personal_color = analyze_personal_color(avg_r, avg_g, avg_b, eye_color, hair_color)
-
-        return {
-            "message": "피부색 추출 성공",
-            "landmarkCount": len(landmarks),
-            "leftCheek": {
-                "x": left_x,
-                "y": left_y,
-            },
-            "rightCheek": {
-                "x": right_x,
-                "y": right_y,
-            },
-            "forehead": {
-                "x": forehead_x,
-                "y": forehead_y,
-            },
-            "averageSkinColor": {
-                "r": avg_r,
-                "g": avg_g,
-                "b": avg_b,
-                "hex": avg_hex,
-                "lab": avg_lab,
-                "hsv": avg_hsv,
-            },
-            "leftCheekColor": left_color,
-            "rightCheekColor": right_color,
-            "foreheadColor": forehead_color,
-            "eyeColor": eye_color,
-            "hairColor": hair_color,
-            "contrastScore": contrast_score,
-            "contrastLevel": contrast_level,
-            **personal_color,
-        }
+    return {
+        "message": "피부색 추출 성공",
+        "landmarkCount": len(landmarks),
+        "leftCheek": {"x": left_x, "y": left_y},
+        "rightCheek": {"x": right_x, "y": right_y},
+        "forehead": {"x": forehead_x, "y": forehead_y},
+        "averageSkinColor": {
+            "r": avg_r, "g": avg_g, "b": avg_b,
+            "hex": avg_hex, "lab": avg_lab, "hsv": avg_hsv,
+        },
+        "leftCheekColor": left_color,
+        "rightCheekColor": right_color,
+        "foreheadColor": forehead_color,
+        "eyeColor": eye_color,
+        "hairColor": hair_color,
+        "contrastScore": contrast_score,
+        "contrastLevel": contrast_level,
+        **personal_color,
+    }
