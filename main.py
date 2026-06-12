@@ -3,15 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
 import mediapipe as mp
+from pathlib import Path
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
-_face_landmarker_options = mp_vision.FaceLandmarkerOptions(
-    base_options=mp_python.BaseOptions(model_asset_path="face_landmarker.task"),
-    num_faces=1,
-    min_face_detection_confidence=0.5,
-)
-_face_landmarker = mp_vision.FaceLandmarker.create_from_options(_face_landmarker_options)
+FACE_LANDMARKER_MODEL_PATH = Path(__file__).with_name("face_landmarker.task")
+_face_landmarker = None
 
 app = FastAPI()
 
@@ -22,6 +19,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def decode_image(contents: bytes):
+    np_array = np.frombuffer(contents, np.uint8)
+    return cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+
+
+def get_face_landmarks(rgb_image):
+    global _face_landmarker
+
+    if FACE_LANDMARKER_MODEL_PATH.exists():
+        if _face_landmarker is None:
+            options = mp_vision.FaceLandmarkerOptions(
+                base_options=mp_python.BaseOptions(
+                    model_asset_path=str(FACE_LANDMARKER_MODEL_PATH)
+                ),
+                num_faces=1,
+                min_face_detection_confidence=0.5,
+            )
+            _face_landmarker = mp_vision.FaceLandmarker.create_from_options(options)
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+        result = _face_landmarker.detect(mp_image)
+
+        if not result.face_landmarks:
+            return None
+
+        return result.face_landmarks[0]
+
+    mp_face_mesh = mp.solutions.face_mesh
+
+    with mp_face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+    ) as face_mesh:
+        result = face_mesh.process(rgb_image)
+
+        if not result.multi_face_landmarks:
+            return None
+
+        return result.multi_face_landmarks[0].landmark
 
 
 PERSONAL_COLOR_TYPES = {
@@ -528,30 +568,45 @@ def extract_hair_color(image, landmarks, width, height):
     return mean_rgb_from_pixels(pixels)
 
 
-@app.get("/")
-def root():
-    return {"message": "Tone-Z Backend"}
+def is_valid_frame(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    brightness = float(np.mean(gray))
+    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    if brightness < 45:
+        return False, {
+            "brightness": round(brightness, 2),
+            "blurScore": round(blur_score, 2),
+            "reason": "too_dark",
+        }
+    if brightness > 235:
+        return False, {
+            "brightness": round(brightness, 2),
+            "blurScore": round(blur_score, 2),
+            "reason": "too_bright",
+        }
+    if blur_score < 20:
+        return False, {
+            "brightness": round(brightness, 2),
+            "blurScore": round(blur_score, 2),
+            "reason": "too_blurry",
+        }
+
+    return True, {
+        "brightness": round(brightness, 2),
+        "blurScore": round(blur_score, 2),
+        "reason": "ok",
+    }
 
 
-@app.post("/diagnosis")
-async def diagnosis(file: UploadFile = File(...)):
-    contents = await file.read()
-
-    np_array = np.frombuffer(contents, np.uint8)
-    image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
-
-    if image is None:
-        return {"error": "이미지를 읽을 수 없습니다."}
-
+def analyze_single_frame(image):
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
-    result = _face_landmarker.detect(mp_image)
+    landmarks = get_face_landmarks(rgb_image)
 
-    if not result.face_landmarks:
+    if not landmarks:
         return {"error": "얼굴 랜드마크 검출 실패"}
 
     h, w, _ = image.shape
-    landmarks = result.face_landmarks[0]
 
     left_cheek = landmarks[123]
     right_cheek = landmarks[352]
@@ -588,8 +643,12 @@ async def diagnosis(file: UploadFile = File(...)):
         "rightCheek": {"x": right_x, "y": right_y},
         "forehead": {"x": forehead_x, "y": forehead_y},
         "averageSkinColor": {
-            "r": avg_r, "g": avg_g, "b": avg_b,
-            "hex": avg_hex, "lab": avg_lab, "hsv": avg_hsv,
+            "r": avg_r,
+            "g": avg_g,
+            "b": avg_b,
+            "hex": avg_hex,
+            "lab": avg_lab,
+            "hsv": avg_hsv,
         },
         "leftCheekColor": left_color,
         "rightCheekColor": right_color,
@@ -599,4 +658,104 @@ async def diagnosis(file: UploadFile = File(...)):
         "contrastScore": contrast_score,
         "contrastLevel": contrast_level,
         **personal_color,
+    }
+
+
+@app.get("/")
+def root():
+    return {"message": "Tone-Z Backend"}
+
+
+@app.post("/diagnosis")
+async def diagnosis(file: UploadFile = File(...)):
+    contents = await file.read()
+    image = decode_image(contents)
+
+    if image is None:
+        return {"error": "이미지를 읽을 수 없습니다."}
+
+    return analyze_single_frame(image)
+
+
+@app.post("/diagnosis/video")
+async def diagnosis_video(files: list[UploadFile] = File(...)):
+    frame_count = len(files)
+    valid_results = []
+    skipped_frames = []
+
+    for index, file in enumerate(files):
+        contents = await file.read()
+        image = decode_image(contents)
+
+        if image is None:
+            skipped_frames.append({"index": index, "reason": "invalid_image"})
+            continue
+
+        is_valid, quality = is_valid_frame(image)
+        if not is_valid:
+            skipped_frames.append({"index": index, **quality})
+            continue
+
+        result = analyze_single_frame(image)
+        if "error" in result:
+            skipped_frames.append({"index": index, "reason": "face_not_detected"})
+            continue
+
+        valid_results.append(result)
+
+    valid_frame_count = len(valid_results)
+
+    if valid_frame_count < 2:
+        return {
+            "error": "분석 가능한 프레임이 부족합니다.",
+            "frameCount": frame_count,
+            "validFrameCount": valid_frame_count,
+            "skippedFrames": skipped_frames,
+        }
+
+    season_votes = {}
+    for result in valid_results:
+        season = result["season"]
+        confidence = result.get("confidence", 0.5)
+        season_votes[season] = round(season_votes.get(season, 0) + confidence, 4)
+
+    final_season = max(season_votes, key=season_votes.get)
+    total_vote_score = sum(season_votes.values())
+    final_confidence = round(season_votes[final_season] / total_vote_score, 2) if total_vote_score else 0
+    selected_type = PERSONAL_COLOR_TYPES[final_season]
+
+    avg_r = int(sum(result["averageSkinColor"]["r"] for result in valid_results) / valid_frame_count)
+    avg_g = int(sum(result["averageSkinColor"]["g"] for result in valid_results) / valid_frame_count)
+    avg_b = int(sum(result["averageSkinColor"]["b"] for result in valid_results) / valid_frame_count)
+    avg_contrast_score = int(sum(result["contrastScore"] for result in valid_results) / valid_frame_count)
+
+    return {
+        "message": "영상 기반 퍼스널 컬러 분석 성공",
+        "frameCount": frame_count,
+        "validFrameCount": valid_frame_count,
+        "season": final_season,
+        "tone": selected_type["tone"],
+        "toneName": selected_type["toneName"],
+        "seasonName": selected_type["seasonName"],
+        "description": selected_type["description"],
+        "bestColors": selected_type["bestColors"],
+        "worstColors": selected_type["worstColors"],
+        "confidence": final_confidence,
+        "seasonVotes": season_votes,
+        "averageSkinColor": {
+            "r": avg_r,
+            "g": avg_g,
+            "b": avg_b,
+            "hex": "#{:02X}{:02X}{:02X}".format(avg_r, avg_g, avg_b),
+            "lab": rgb_to_lab(avg_r, avg_g, avg_b),
+            "hsv": rgb_to_hsv(avg_r, avg_g, avg_b),
+        },
+        "contrastScore": avg_contrast_score,
+        "contrastLevel": get_contrast_level(avg_contrast_score),
+        "analysisReason": (
+            f"{valid_frame_count}개의 유효 프레임을 분석하고 confidence를 가중치로 season 투표를 진행했습니다. "
+            f"가장 높은 누적 점수는 {final_season}입니다."
+        ),
+        "skippedFrameCount": len(skipped_frames),
+        "skippedFrames": skipped_frames,
     }

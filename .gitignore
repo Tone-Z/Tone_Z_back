@@ -1,14 +1,27 @@
 venv/
 venv311/
+.venv/
+env/
+
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 .env
 .env.*
+!.env.example
 
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 *.log
 
@@ -17,3 +30,6 @@ node_modules/
 
 .DS_Store
 Thumbs.db
+
+# Local model assets. Commit intentionally only if the team wants the model in git.
+face_landmarker.task
