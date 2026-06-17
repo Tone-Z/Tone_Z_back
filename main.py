@@ -1128,9 +1128,10 @@ def stable_classify_from_metrics(metrics):
     feature_darkness = float(metrics.get("featureDarkness", min(eye_value, hair_value)))
     skin_feature_gap = float(metrics.get("skinFeatureGap", max(0, brightness - feature_darkness)))
 
-    if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0:
+    # 웜/쿨 판정 범위를 넓혀 neutral 구간 축소
+    if weighted_lab_b >= 137.0 and cheek_lab_b >= 136.5:
         tone = "warm"
-    elif weighted_lab_b <= 133.0 and cheek_lab_b <= 134.5:
+    elif weighted_lab_b <= 135.0 and cheek_lab_b <= 136.0:
         tone = "cool"
     else:
         tone = "neutral"
@@ -1141,44 +1142,55 @@ def stable_classify_from_metrics(metrics):
         and feature_darkness <= 70
         and skin_feature_gap >= 75
     )
-    is_vivid = weighted_saturation >= 65
-    is_bright = weighted_saturation >= 55 and skin_feature_gap >= 65
+    # 한국인 피부 채도 실측 기준: 진짜 비비드만 잡도록 임계값 높임
+    is_vivid = weighted_saturation >= 75
+    is_bright = weighted_saturation >= 58 and skin_feature_gap >= 65
     is_light = brightness >= 208 and lightness >= 178
     is_low_contrast = skin_feature_gap < 55
-    is_mid_contrast = skin_feature_gap < 90
-    is_muted = weighted_saturation < 40
+    is_muted = weighted_saturation < 42
     is_high_contrast = skin_feature_gap >= 90
     winter_feature = feature_darkness <= 55 and is_high_contrast
 
+    # neutral을 웜/쿨 기울기로 분리
+    warm_leaning = weighted_lab_b >= 136.0
+
     if tone == "neutral":
-        if is_vivid and weighted_lab_b >= 135.0:
-            season = "spring-bright"
-        elif is_vivid:
-            season = "winter-bright"
-        elif is_light:
-            season = "spring-light" if weighted_lab_b >= 135.5 else "summer-light"
-        elif is_deep:
-            season = "winter-deep" if winter_feature and weighted_lab_b < 133 else "autumn-deep" if weighted_lab_b >= 135 else "winter-deep"
-        elif brightness < 172 and lightness < 152 and weighted_lab_b >= 134.5:
-            season = "autumn-mute"
-        elif brightness >= 188 and is_mid_contrast:
-            season = "spring-soft" if weighted_lab_b >= 135.5 else "summer-mute"
-        elif weighted_lab_b >= 135.5:
-            season = "autumn-mute"
+        if warm_leaning:
+            # 웜 기울기 neutral → 봄/가을
+            if is_vivid:
+                season = "spring-bright"
+            elif is_light:
+                season = "spring-light"
+            elif brightness < 188 or lightness < 162:
+                season = "autumn-mute"
+            else:
+                season = "spring-soft"
         else:
-            season = "summer-mute"
+            # 쿨 기울기 neutral → 여름/겨울
+            if is_vivid:
+                season = "winter-bright"
+            elif is_light:
+                season = "summer-light"
+            elif is_deep and winter_feature:
+                season = "winter-deep"
+            else:
+                season = "summer-mute"
     elif tone == "warm":
         if is_deep:
             season = "autumn-deep"
+        elif brightness < 192 or lightness < 163:
+            # 어두운 웜 → 가을 계열 (채도 무관하게 먼저 체크)
+            season = "autumn-mute"
         elif is_vivid:
             season = "spring-bright"
         elif is_light:
             season = "spring-light"
-        elif brightness < 192 or lightness < 163 or is_muted:
+        elif is_muted:
             season = "autumn-mute"
         else:
             season = "spring-soft"
     else:
+        # cool
         if is_deep and winter_feature:
             season = "winter-deep"
         elif is_deep:
@@ -1661,17 +1673,39 @@ def root():
 
 
 @app.post("/diagnosis")
-async def diagnosis(file: UploadFile = File(...)):
+async def diagnosis(file: UploadFile = File(...), debug: bool = False):
     contents = await file.read()
     image = decode_image(contents)
 
     if image is None:
         return {"error": "이미지를 읽을 수 없습니다."}
 
-    result = analyze_single_frame(image)
+    result = analyze_single_frame(image, include_debug=debug)
 
     if "error" in result:
         return result
+
+    if debug:
+        public = public_personal_color_result(result)
+        dm = result.get("debugMetrics", {})
+        public["_debug"] = {
+            "tone": dm.get("tone"),
+            "brightness": dm.get("brightness"),
+            "saturation": dm.get("saturation"),
+            "lightness": dm.get("lightness"),
+            "weightedLabB": dm.get("weightedLabB"),
+            "weightedSaturation": dm.get("weightedSaturation"),
+            "cheekLabB": dm.get("cheekLabB"),
+            "cheekSaturation": dm.get("cheekSaturation"),
+            "contrastScore": dm.get("contrastScore"),
+            "hairValue": dm.get("hairValue"),
+            "eyeValue": dm.get("eyeValue"),
+            "featureDarkness": dm.get("featureDarkness"),
+            "skinFeatureGap": dm.get("skinFeatureGap"),
+            "warmthScore": dm.get("warmthScore"),
+            "stableSeason": dm.get("stableSeason"),
+        }
+        return public
 
     return public_personal_color_result(result)
 
