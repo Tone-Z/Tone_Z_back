@@ -584,9 +584,9 @@ def profile_distance(metrics, profile):
     elif metric_tone == "cool" and profile_tone == "warm":
         score += 10
     elif metric_tone == "neutral":
-        if weighted_lab_b >= 134.8 and profile_tone == "cool":
+        if weighted_lab_b >= 136.5 and profile_tone == "cool":
             score += 2
-        elif weighted_lab_b < 134.8 and profile_tone == "warm":
+        elif weighted_lab_b < 133.5 and profile_tone == "warm":
             score += 2
 
     return round(score, 2)
@@ -890,10 +890,10 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         + (cheek_saturation - 35) * 0.05
     )
 
-    if weighted_lab_b >= 137.5 and cheek_lab_b >= 136.8:
+    if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0:
         tone = "warm"
         tone_name = "웜톤"
-    elif weighted_lab_b <= 132.5 and cheek_lab_b <= 134:
+    elif weighted_lab_b <= 133.0 and cheek_lab_b <= 134.5:
         tone = "cool"
         tone_name = "쿨톤"
     else:
@@ -1122,9 +1122,9 @@ def stable_classify_from_metrics(metrics):
     feature_darkness = float(metrics.get("featureDarkness", min(eye_value, hair_value)))
     skin_feature_gap = float(metrics.get("skinFeatureGap", max(0, brightness - feature_darkness)))
 
-    if weighted_lab_b >= 137.5 and cheek_lab_b >= 136.8:
+    if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0:
         tone = "warm"
-    elif weighted_lab_b <= 132.5 and cheek_lab_b <= 134:
+    elif weighted_lab_b <= 133.0 and cheek_lab_b <= 134.5:
         tone = "cool"
     else:
         tone = "neutral"
