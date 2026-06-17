@@ -142,15 +142,18 @@ DEFAULT_PERSONAL_COLOR_PROFILES = {
     # contrast: 피부와 눈/머리의 밝기 차이, hair_value/eye_value: 눈과 머리의 어두운 정도
     # 한국인 기준으로 보정: 한국인은 머리/눈이 전반적으로 어두워서 서양 기준보다 hair_value/eye_value를 낮췄습니다.
     # autumn-deep만 유독 낮게 설정해 전형적인 흑발/흑안 한국인이 autumn-deep으로 과분류되는 것을 방지합니다.
-    "spring-light": {"tone": "warm", "value": 218, "saturation": 38, "lightness": 184, "chroma": 16, "warmth": 14, "contrast": 24, "hair_value": 95, "eye_value": 78},
-    "spring-bright": {"tone": "warm", "value": 218, "saturation": 62, "lightness": 178, "chroma": 28, "warmth": 18, "contrast": 42, "hair_value": 70, "eye_value": 55},
-    "spring-soft": {"tone": "warm", "value": 198, "saturation": 34, "lightness": 166, "chroma": 14, "warmth": 12, "contrast": 22, "hair_value": 88, "eye_value": 70},
-    "autumn-mute": {"tone": "warm", "value": 176, "saturation": 34, "lightness": 150, "chroma": 15, "warmth": 15, "contrast": 30, "hair_value": 72, "eye_value": 58},
-    "autumn-deep": {"tone": "warm", "value": 145, "saturation": 48, "lightness": 126, "chroma": 24, "warmth": 20, "contrast": 58, "hair_value": 40, "eye_value": 32},
-    "summer-light": {"tone": "cool", "value": 212, "saturation": 28, "lightness": 182, "chroma": 10, "warmth": 5, "contrast": 22, "hair_value": 92, "eye_value": 75},
-    "summer-mute": {"tone": "cool", "value": 186, "saturation": 24, "lightness": 160, "chroma": 10, "warmth": 2, "contrast": 24, "hair_value": 78, "eye_value": 62},
-    "winter-bright": {"tone": "cool", "value": 210, "saturation": 56, "lightness": 166, "chroma": 26, "warmth": -8, "contrast": 68, "hair_value": 32, "eye_value": 25},
-    "winter-deep": {"tone": "cool", "value": 142, "saturation": 48, "lightness": 118, "chroma": 24, "warmth": -10, "contrast": 78, "hair_value": 22, "eye_value": 18},
+    # 한국인 기준 보정:
+    # 1. 흑발/흑안으로 contrastScore가 항상 70~100 → 서브타입 간 contrast 프로필을 한국인 실측 범위로 통일
+    # 2. 봄/여름 서브타입은 포화도·밝기로 구분, hair/eye는 계절 간 구분에만 활용
+    "spring-light": {"tone": "warm", "value": 218, "saturation": 36, "lightness": 184, "chroma": 16, "warmth": 14, "contrast": 75, "hair_value": 82, "eye_value": 65},
+    "spring-bright": {"tone": "warm", "value": 215, "saturation": 62, "lightness": 178, "chroma": 28, "warmth": 18, "contrast": 80, "hair_value": 80, "eye_value": 63},
+    "spring-soft": {"tone": "warm", "value": 196, "saturation": 32, "lightness": 164, "chroma": 13, "warmth": 12, "contrast": 75, "hair_value": 82, "eye_value": 65},
+    "autumn-mute": {"tone": "warm", "value": 176, "saturation": 34, "lightness": 150, "chroma": 15, "warmth": 15, "contrast": 72, "hair_value": 75, "eye_value": 60},
+    "autumn-deep": {"tone": "warm", "value": 145, "saturation": 48, "lightness": 126, "chroma": 24, "warmth": 20, "contrast": 88, "hair_value": 40, "eye_value": 32},
+    "summer-light": {"tone": "cool", "value": 212, "saturation": 28, "lightness": 182, "chroma": 10, "warmth": 5, "contrast": 74, "hair_value": 82, "eye_value": 65},
+    "summer-mute": {"tone": "cool", "value": 184, "saturation": 22, "lightness": 158, "chroma": 9, "warmth": 2, "contrast": 72, "hair_value": 80, "eye_value": 63},
+    "winter-bright": {"tone": "cool", "value": 210, "saturation": 56, "lightness": 166, "chroma": 26, "warmth": -8, "contrast": 88, "hair_value": 50, "eye_value": 40},
+    "winter-deep": {"tone": "cool", "value": 142, "saturation": 48, "lightness": 118, "chroma": 24, "warmth": -10, "contrast": 92, "hair_value": 30, "eye_value": 22},
 }
 
 
