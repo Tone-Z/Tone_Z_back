@@ -1622,7 +1622,7 @@ def is_valid_frame(image):
             "blurScore": round(blur_score, 2),
             "reason": "too_bright",
         }
-    if blur_score < 18:
+    if blur_score < 10:
         return False, {
             "brightness": round(brightness, 2),
             "blurScore": round(blur_score, 2),
@@ -1928,7 +1928,7 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
                 image,
                 classify=False,
                 fast_video=False,
-                min_face_width_ratio=0.24,
+                min_face_width_ratio=0.16,
             )
         except Exception as exc:
             skipped_frames.append({
@@ -1959,7 +1959,7 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
         flush=True,
     )
 
-    if valid_frame_count < 3:
+    if valid_frame_count < 2:
         return error_response(
             "분석 가능한 안정 프레임이 부족합니다.",
             status_code=422,
