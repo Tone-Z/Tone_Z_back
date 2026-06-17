@@ -19,6 +19,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://tone-z.mirim-it-show.site",
+        "http://tone-z.mirim-it-show.site",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -1696,7 +1698,7 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
     valid_results = []
     skipped_frames = []
 
-    selected_files = select_video_frame_files(files, max_frames=12)
+    selected_files = select_video_frame_files(files, max_frames=8)
 
     for index, file in selected_files:
         contents = await file.read()
