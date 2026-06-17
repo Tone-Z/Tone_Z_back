@@ -145,15 +145,15 @@ DEFAULT_PERSONAL_COLOR_PROFILES = {
     # 한국인 기준 보정:
     # 1. 흑발/흑안으로 contrastScore가 항상 70~100 → 서브타입 간 contrast 프로필을 한국인 실측 범위로 통일
     # 2. 봄/여름 서브타입은 포화도·밝기로 구분, hair/eye는 계절 간 구분에만 활용
-    "spring-light": {"tone": "warm", "value": 218, "saturation": 36, "lightness": 184, "chroma": 16, "warmth": 14, "contrast": 75, "hair_value": 82, "eye_value": 65},
-    "spring-bright": {"tone": "warm", "value": 215, "saturation": 62, "lightness": 178, "chroma": 28, "warmth": 18, "contrast": 80, "hair_value": 80, "eye_value": 63},
-    "spring-soft": {"tone": "warm", "value": 196, "saturation": 32, "lightness": 164, "chroma": 13, "warmth": 12, "contrast": 75, "hair_value": 82, "eye_value": 65},
-    "autumn-mute": {"tone": "warm", "value": 176, "saturation": 34, "lightness": 150, "chroma": 15, "warmth": 15, "contrast": 72, "hair_value": 75, "eye_value": 60},
-    "autumn-deep": {"tone": "warm", "value": 145, "saturation": 48, "lightness": 126, "chroma": 24, "warmth": 20, "contrast": 88, "hair_value": 40, "eye_value": 32},
-    "summer-light": {"tone": "cool", "value": 212, "saturation": 28, "lightness": 182, "chroma": 10, "warmth": 5, "contrast": 74, "hair_value": 82, "eye_value": 65},
-    "summer-mute": {"tone": "cool", "value": 184, "saturation": 22, "lightness": 158, "chroma": 9, "warmth": 2, "contrast": 72, "hair_value": 80, "eye_value": 63},
-    "winter-bright": {"tone": "cool", "value": 210, "saturation": 56, "lightness": 166, "chroma": 26, "warmth": -8, "contrast": 88, "hair_value": 50, "eye_value": 40},
-    "winter-deep": {"tone": "cool", "value": 142, "saturation": 48, "lightness": 118, "chroma": 24, "warmth": -10, "contrast": 92, "hair_value": 30, "eye_value": 22},
+    "spring-light": {"tone": "warm", "value": 215, "saturation": 52, "lightness": 182, "chroma": 18, "warmth": 13, "contrast": 76, "hair_value": 82, "eye_value": 65},
+    "spring-bright": {"tone": "warm", "value": 210, "saturation": 80, "lightness": 174, "chroma": 32, "warmth": 16, "contrast": 80, "hair_value": 80, "eye_value": 62},
+    "spring-soft": {"tone": "warm", "value": 200, "saturation": 48, "lightness": 167, "chroma": 14, "warmth": 11, "contrast": 76, "hair_value": 82, "eye_value": 65},
+    "autumn-mute": {"tone": "warm", "value": 178, "saturation": 42, "lightness": 152, "chroma": 16, "warmth": 14, "contrast": 72, "hair_value": 75, "eye_value": 60},
+    "autumn-deep": {"tone": "warm", "value": 148, "saturation": 58, "lightness": 128, "chroma": 26, "warmth": 20, "contrast": 88, "hair_value": 40, "eye_value": 32},
+    "summer-light": {"tone": "cool", "value": 210, "saturation": 36, "lightness": 180, "chroma": 11, "warmth": 4, "contrast": 74, "hair_value": 82, "eye_value": 65},
+    "summer-mute": {"tone": "cool", "value": 185, "saturation": 28, "lightness": 160, "chroma": 10, "warmth": 1, "contrast": 72, "hair_value": 80, "eye_value": 63},
+    "winter-bright": {"tone": "cool", "value": 208, "saturation": 68, "lightness": 168, "chroma": 28, "warmth": -8, "contrast": 88, "hair_value": 50, "eye_value": 40},
+    "winter-deep": {"tone": "cool", "value": 145, "saturation": 58, "lightness": 120, "chroma": 26, "warmth": -10, "contrast": 92, "hair_value": 30, "eye_value": 22},
 }
 
 
@@ -1029,6 +1029,9 @@ def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_co
 
 
 def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color=None, hair_color=None, include_debug=False):
+    stable = stable_classify_from_metrics(debug_metrics)
+    best_season = stable["season"]
+
     profiles = get_active_color_profiles()
     ranked_scores = sorted(
         [
@@ -1037,14 +1040,14 @@ def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color
         ]
     )
 
-    best_score, best_season = ranked_scores[0]
-    second_score = ranked_scores[1][0] if len(ranked_scores) > 1 else best_score + 20
-    score_gap = max(0, second_score - best_score)
-    confidence = 0.55 + min(0.35, score_gap / 45)
+    second_score = ranked_scores[1][0] if len(ranked_scores) > 1 else 20
+    best_profile_score = next((s for s, n in ranked_scores if n == best_season), ranked_scores[0][0])
+    score_gap = max(0, second_score - best_profile_score)
+    confidence = stable["confidence"] + min(0.08, score_gap / 60)
     tone = debug_metrics.get("tone")
 
     if tone == "neutral":
-        confidence -= 0.08
+        confidence -= 0.06
 
     confidence = round(max(0.35, min(0.95, confidence)), 2)
     top_candidates = [
@@ -1138,40 +1141,49 @@ def stable_classify_from_metrics(metrics):
         and feature_darkness <= 70
         and skin_feature_gap >= 75
     )
-    is_bright = weighted_saturation >= 65 and skin_feature_gap >= 70
-    is_light = brightness >= 205 and lightness >= 180 and skin_feature_gap < 90
+    is_vivid = weighted_saturation >= 65
+    is_bright = weighted_saturation >= 55 and skin_feature_gap >= 65
+    is_light = brightness >= 208 and lightness >= 178
     is_low_contrast = skin_feature_gap < 55
     is_mid_contrast = skin_feature_gap < 90
-    is_muted = weighted_saturation < 42
-    is_high_contrast = skin_feature_gap >= 100
+    is_muted = weighted_saturation < 40
+    is_high_contrast = skin_feature_gap >= 90
     winter_feature = feature_darkness <= 55 and is_high_contrast
 
     if tone == "neutral":
-        if is_light:
-            season = "spring-soft" if weighted_lab_b >= 135 else "summer-light"
+        if is_vivid and weighted_lab_b >= 135.0:
+            season = "spring-bright"
+        elif is_vivid:
+            season = "winter-bright"
+        elif is_light:
+            season = "spring-light" if weighted_lab_b >= 135.5 else "summer-light"
         elif is_deep:
-            season = "winter-deep" if winter_feature and weighted_lab_b < 133 else "autumn-mute"
-        elif brightness < 170 and lightness < 150 and weighted_lab_b >= 135:
+            season = "winter-deep" if winter_feature and weighted_lab_b < 133 else "autumn-deep" if weighted_lab_b >= 135 else "winter-deep"
+        elif brightness < 172 and lightness < 152 and weighted_lab_b >= 134.5:
             season = "autumn-mute"
-        elif brightness >= 190 and is_mid_contrast:
+        elif brightness >= 188 and is_mid_contrast:
             season = "spring-soft" if weighted_lab_b >= 135.5 else "summer-mute"
+        elif weighted_lab_b >= 135.5:
+            season = "autumn-mute"
         else:
             season = "summer-mute"
     elif tone == "warm":
         if is_deep:
             season = "autumn-deep"
-        elif is_bright and is_high_contrast:
+        elif is_vivid:
             season = "spring-bright"
-        elif is_light or (brightness >= 198 and lightness >= 172 and is_low_contrast):
+        elif is_light:
             season = "spring-light"
-        elif brightness < 178 or lightness < 155 or is_muted:
+        elif brightness < 192 or lightness < 163 or is_muted:
             season = "autumn-mute"
         else:
             season = "spring-soft"
     else:
         if is_deep and winter_feature:
             season = "winter-deep"
-        elif is_bright and (winter_feature or is_high_contrast):
+        elif is_deep:
+            season = "winter-deep" if feature_darkness <= 60 else "summer-mute"
+        elif is_vivid or (is_bright and is_high_contrast):
             season = "winter-bright"
         elif is_light:
             season = "summer-light"
