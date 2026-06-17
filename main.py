@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import csv
 import cv2
 import numpy as np
@@ -488,8 +489,8 @@ def calculate_profiles_from_samples():
     if not SAMPLES_CSV_PATH.exists():
         return {}
 
-    sums = {}
-    field_counts = {}
+    values_by_label = {}
+    sample_counts = {}
 
     with SAMPLES_CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
@@ -500,8 +501,8 @@ def calculate_profiles_from_samples():
             if label not in PERSONAL_COLOR_TYPES:
                 continue
 
-            sums.setdefault(label, {field: 0.0 for field in CSV_METRIC_FIELDS})
-            field_counts.setdefault(label, {field: 0 for field in CSV_METRIC_FIELDS})
+            values_by_label.setdefault(label, {field: [] for field in CSV_METRIC_FIELDS})
+            sample_counts[label] = sample_counts.get(label, 0) + 1
 
             for field in CSV_METRIC_FIELDS:
                 raw_value = row.get(field)
@@ -510,20 +511,20 @@ def calculate_profiles_from_samples():
                     continue
 
                 try:
-                    sums[label][field] += float(raw_value)
-                    field_counts[label][field] += 1
+                    values_by_label[label][field].append(float(raw_value))
                 except ValueError:
                     pass
 
     profiles = {}
 
-    for label, totals in sums.items():
+    for label, field_values in values_by_label.items():
         profiles[label] = {
-            field: totals[field] / field_counts[label][field]
+            field: float(np.median(values))
             for field in CSV_METRIC_FIELDS
-            if field_counts[label][field] > 0
+            if (values := field_values[field])
         }
         profiles[label]["tone"] = PERSONAL_COLOR_TYPES[label]["tone"]
+        profiles[label]["sampleCount"] = sample_counts.get(label, 0)
 
     return profiles
 
@@ -547,6 +548,36 @@ def get_active_color_profiles():
         }
         for season, profile in DEFAULT_PERSONAL_COLOR_PROFILES.items()
     }
+
+    sample_profiles = calculate_profiles_from_samples()
+
+    for season, sample_profile in sample_profiles.items():
+        if season not in default_profiles:
+            continue
+
+        sample_count = int(sample_profile.get("sampleCount", 0))
+
+        if sample_count < 3:
+            continue
+
+        # 적은 샘플은 기본값을 더 믿고, 샘플이 쌓일수록 실제 데이터 비중을 올립니다.
+        sample_weight = min(0.75, sample_count / (sample_count + 15))
+        default_weight = 1 - sample_weight
+        blended_profile = default_profiles[season].copy()
+
+        for field in CSV_METRIC_FIELDS:
+            if field not in blended_profile or field not in sample_profile:
+                continue
+
+            blended_profile[field] = (
+                float(blended_profile[field]) * default_weight
+                + float(sample_profile[field]) * sample_weight
+            )
+
+        blended_profile["tone"] = default_profiles[season]["tone"]
+        blended_profile["sampleCount"] = sample_count
+        blended_profile["sampleWeight"] = round(sample_weight, 4)
+        default_profiles[season] = blended_profile
 
     return default_profiles
 
@@ -1045,6 +1076,31 @@ def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color
     score_gap = max(0, second_score - best_profile_score)
     confidence = stable["confidence"] + min(0.08, score_gap / 60)
     tone = debug_metrics.get("tone")
+    nearest_profile_score, nearest_profile_season = ranked_scores[0]
+    nearest_profile = profiles.get(nearest_profile_season, {})
+    nearest_sample_count = int(nearest_profile.get("sampleCount", 0))
+    nearest_profile_advantage = best_profile_score - nearest_profile_score
+
+    if nearest_profile_season != best_season and nearest_sample_count >= 3:
+        stable_tone = PERSONAL_COLOR_TYPES[best_season]["tone"]
+        nearest_tone = PERSONAL_COLOR_TYPES[nearest_profile_season]["tone"]
+        stable_group = best_season.split("-")[0]
+        nearest_group = nearest_profile_season.split("-")[0]
+        can_switch_within_group = stable_group == nearest_group and nearest_profile_advantage >= 3.5
+        can_switch_within_tone = (
+            stable_tone == nearest_tone
+            and nearest_profile_advantage >= 12
+            and nearest_sample_count >= 10
+        )
+        can_switch_across_tone = (
+            nearest_sample_count >= 15
+            and nearest_profile_advantage >= 16
+            and tone == "neutral"
+        )
+
+        if can_switch_within_group or can_switch_within_tone or can_switch_across_tone:
+            best_season = nearest_profile_season
+            confidence = max(0.5, confidence - 0.04)
 
     if tone == "neutral":
         confidence -= 0.06
@@ -1087,6 +1143,13 @@ def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color
                 "seasonGroup": debug_metrics.get("seasonGroup"),
             },
             "topCandidates": top_candidates,
+            "profileDecision": {
+                "stableSeason": stable["season"],
+                "nearestProfileSeason": nearest_profile_season,
+                "nearestProfileScore": nearest_profile_score,
+                "nearestProfileSampleCount": nearest_sample_count,
+                "selectedSeason": best_season,
+            },
             "debugMetrics": debug_metrics,
             "csvMetrics": build_csv_metrics(debug_metrics),
         })
@@ -1152,7 +1215,38 @@ def stable_classify_from_metrics(metrics):
     winter_feature = feature_darkness <= 55 and is_high_contrast
 
     # neutral을 웜/쿨 기울기로 분리
-    warm_leaning = weighted_lab_b >= 136.0
+    warmth_score = float(metrics.get("warmthScore", 0))
+    has_medium_warm_signal = (
+        weighted_lab_b >= 136.8
+        and cheek_lab_b >= 136
+        and warmth_score >= 5
+    )
+    has_strong_warm_signal = (
+        weighted_lab_b >= 138
+        and cheek_lab_b >= 137
+        and warmth_score >= 8
+    )
+    warm_leaning = weighted_lab_b >= 136.0 and warmth_score >= 2
+    strong_autumn_condition = (
+        has_strong_warm_signal
+        and brightness < 170
+        and lightness < 150
+    )
+    muted_autumn_condition = (
+        has_medium_warm_signal
+        and is_muted
+        and weighted_saturation < 36
+        and brightness < 190
+    )
+    strong_winter_condition = (
+        winter_feature
+        and (is_deep or weighted_saturation >= 62)
+    )
+    bright_winter_condition = (
+        weighted_saturation >= 72
+        and is_high_contrast
+        and feature_darkness <= 60
+    )
 
     if tone == "neutral":
         if warm_leaning:
@@ -1161,41 +1255,37 @@ def stable_classify_from_metrics(metrics):
                 season = "spring-bright"
             elif is_light:
                 season = "spring-light"
-            elif brightness < 188 or lightness < 162:
+            elif strong_autumn_condition:
                 season = "autumn-mute"
             else:
                 season = "spring-soft"
         else:
             # 쿨 기울기 neutral → 여름/겨울
-            if is_vivid:
+            if bright_winter_condition:
                 season = "winter-bright"
             elif is_light:
                 season = "summer-light"
-            elif is_deep and winter_feature:
+            elif strong_winter_condition:
                 season = "winter-deep"
             else:
                 season = "summer-mute"
     elif tone == "warm":
-        if is_deep:
+        if strong_autumn_condition and is_deep:
             season = "autumn-deep"
-        elif brightness < 192 or lightness < 163:
+        elif strong_autumn_condition or muted_autumn_condition:
             # 어두운 웜 → 가을 계열 (채도 무관하게 먼저 체크)
             season = "autumn-mute"
         elif is_vivid:
             season = "spring-bright"
         elif is_light:
             season = "spring-light"
-        elif is_muted:
-            season = "autumn-mute"
         else:
             season = "spring-soft"
     else:
         # cool
-        if is_deep and winter_feature:
+        if strong_winter_condition and is_deep:
             season = "winter-deep"
-        elif is_deep:
-            season = "winter-deep" if feature_darkness <= 60 else "summer-mute"
-        elif is_vivid or (is_bright and is_high_contrast):
+        elif bright_winter_condition:
             season = "winter-bright"
         elif is_light:
             season = "summer-light"
@@ -1252,8 +1342,34 @@ def choose_final_video_result(filtered_results):
     tie_metrics = median_debug_metrics(filtered_results)
     vote_season, vote_count = majority_vote_season(filtered_results, tie_metrics)
     vote_ratio = vote_count / max(1, len(filtered_results))
+    group_counts = {}
 
-    if vote_season == stable_result["season"] or vote_ratio >= 0.65:
+    for result in filtered_results:
+        metrics = result.get("debugMetrics", {})
+        season = stable_classify_from_metrics(metrics)["season"]
+        group = season.split("-")[0]
+        group_counts[group] = group_counts.get(group, 0) + 1
+
+    dominant_group = max(group_counts, key=group_counts.get) if group_counts else stable_result["season"].split("-")[0]
+    dominant_group_ratio = group_counts.get(dominant_group, 0) / max(1, len(filtered_results))
+
+    if dominant_group_ratio >= 0.55:
+        profiles = get_active_color_profiles()
+        group_candidates = [
+            season
+            for season in profiles
+            if season.split("-")[0] == dominant_group
+        ]
+        profile_season = min(
+            group_candidates,
+            key=lambda season: profile_distance(tie_metrics, profiles[season]),
+        )
+
+        if vote_season.split("-")[0] == dominant_group and vote_ratio >= 0.5:
+            final_season = vote_season
+        else:
+            final_season = profile_season
+    elif vote_season == stable_result["season"] or vote_ratio >= 0.65:
         final_season = vote_season
     else:
         final_season = stable_result["season"]
@@ -1261,6 +1377,8 @@ def choose_final_video_result(filtered_results):
     final_metrics["stableSeason"] = stable_result["season"]
     final_metrics["voteSeason"] = vote_season
     final_metrics["voteRatio"] = round(vote_ratio, 4)
+    final_metrics["dominantSeasonGroup"] = dominant_group
+    final_metrics["dominantSeasonGroupRatio"] = round(dominant_group_ratio, 4)
     final_confidence = max(stable_result["confidence"] - 0.04, 0.72) + min(0.14, vote_ratio * 0.14)
     final_result = build_result_for_season(final_season, final_confidence)
 
@@ -1278,6 +1396,25 @@ def public_personal_color_result(result):
         "worstColors": result["worstColors"],
         "confidence": result["confidence"],
     }
+
+
+def error_response(message, status_code=400, **extra):
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": message, **extra},
+    )
+
+
+def analysis_error_response(result, status_code=422):
+    return error_response(
+        result["error"],
+        status_code=status_code,
+        **{
+            key: value
+            for key, value in result.items()
+            if key != "error"
+        },
+    )
 
 
 def analyze_personal_color(avg_r, avg_g, avg_b, eye_color=None, hair_color=None, eyebrow_color=None, dominant_colors=None, include_debug=False):
@@ -1473,7 +1610,7 @@ def is_valid_frame(image):
     brightness = float(np.mean(gray))
     blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-    if brightness < 45:
+    if brightness < 70:
         return False, {
             "brightness": round(brightness, 2),
             "blurScore": round(blur_score, 2),
@@ -1485,7 +1622,7 @@ def is_valid_frame(image):
             "blurScore": round(blur_score, 2),
             "reason": "too_bright",
         }
-    if blur_score < 10:
+    if blur_score < 18:
         return False, {
             "brightness": round(brightness, 2),
             "blurScore": round(blur_score, 2),
@@ -1576,7 +1713,7 @@ def extract_skin_regions(image, landmarks, width, height):
     }
 
 
-def analyze_single_frame(image, include_debug=False, classify=True, fast_video=False):
+def analyze_single_frame(image, include_debug=False, classify=True, fast_video=False, min_face_width_ratio=0.2):
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     landmarks = get_face_landmarks(rgb_image)
 
@@ -1584,6 +1721,15 @@ def analyze_single_frame(image, include_debug=False, classify=True, fast_video=F
         return {"error": "얼굴 랜드마크 검출 실패"}
 
     h, w, _ = image.shape
+    xs = [int(point.x * w) for point in landmarks]
+    face_width_ratio = (max(xs) - min(xs)) / max(1, w)
+
+    if face_width_ratio < min_face_width_ratio:
+        return {
+            "error": "얼굴이 너무 멀리 있어요. 카메라에 조금 더 가까이 와주세요.",
+            "faceWidthRatio": round(face_width_ratio, 4),
+        }
+
     skin_regions = extract_skin_regions(image, landmarks, w, h)
     points = skin_regions["points"]
     dominant_colors = skin_regions["colors"]
@@ -1678,12 +1824,12 @@ async def diagnosis(file: UploadFile = File(...), debug: bool = False):
     image = decode_image(contents)
 
     if image is None:
-        return {"error": "이미지를 읽을 수 없습니다."}
+        return error_response("이미지를 읽을 수 없습니다.", status_code=400)
 
     result = analyze_single_frame(image, include_debug=debug)
 
     if "error" in result:
-        return result
+        return analysis_error_response(result)
 
     if debug:
         public = public_personal_color_result(result)
@@ -1713,24 +1859,34 @@ async def diagnosis(file: UploadFile = File(...), debug: bool = False):
 @app.post("/collect-sample")
 async def collect_sample(label: str = Form(...), file: UploadFile = File(...)):
     if label not in PERSONAL_COLOR_TYPES:
-        return {
-            "error": "지원하지 않는 라벨입니다.",
-            "allowedLabels": list(PERSONAL_COLOR_TYPES.keys()),
-        }
+        return error_response(
+            "지원하지 않는 라벨입니다.",
+            status_code=400,
+            **{"allowedLabels": list(PERSONAL_COLOR_TYPES.keys())},
+        )
 
     contents = await file.read()
     image = decode_image(contents)
 
     if image is None:
-        return {"error": "이미지를 읽을 수 없습니다."}
+        return error_response("이미지를 읽을 수 없습니다.", status_code=400)
+
+    is_valid, quality = is_valid_frame(image)
+    if not is_valid:
+        return error_response(
+            "샘플로 쓰기 어려운 사진입니다. 밝기와 초점을 맞춰 다시 촬영해주세요.",
+            status_code=422,
+            **quality,
+        )
 
     result = analyze_single_frame(image, include_debug=True)
 
     if "error" in result:
-        return result
+        return analysis_error_response(result)
 
     append_sample_to_csv(label, result["debugMetrics"])
     sample_profiles = calculate_profiles_from_samples()
+    label_sample_count = int(sample_profiles.get(label, {}).get("sampleCount", 0))
 
     return {
         "message": "샘플 저장 성공",
@@ -1738,6 +1894,7 @@ async def collect_sample(label: str = Form(...), file: UploadFile = File(...)):
         "csvPath": str(SAMPLES_CSV_PATH),
         "savedMetrics": result["csvMetrics"],
         "sampleProfileCount": len(sample_profiles),
+        "labelSampleCount": label_sample_count,
         "season": result["season"],
     }
 
@@ -1748,7 +1905,10 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
     valid_results = []
     skipped_frames = []
 
-    selected_files = select_video_frame_files(files, max_frames=8)
+    if frame_count == 0:
+        return error_response("업로드된 프레임이 없습니다.", status_code=400)
+
+    selected_files = select_video_frame_files(files, max_frames=10)
 
     for index, file in selected_files:
         contents = await file.read()
@@ -1764,7 +1924,12 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
             continue
 
         try:
-            result = analyze_single_frame(image, classify=False, fast_video=True)
+            result = analyze_single_frame(
+                image,
+                classify=False,
+                fast_video=False,
+                min_face_width_ratio=0.24,
+            )
         except Exception as exc:
             skipped_frames.append({
                 "index": index,
@@ -1794,13 +1959,17 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
         flush=True,
     )
 
-    if valid_frame_count == 0:
-        return {
-            "error": "분석 가능한 프레임이 부족합니다.",
-            "frameCount": frame_count,
-            "validFrameCount": valid_frame_count,
-            "skippedFrames": skipped_frames,
-        }
+    if valid_frame_count < 3:
+        return error_response(
+            "분석 가능한 안정 프레임이 부족합니다.",
+            status_code=422,
+            **{
+                "frameCount": frame_count,
+                "validFrameCount": valid_frame_count,
+                "skippedFrames": skipped_frames,
+                "skippedSummary": skipped_summary,
+            },
+        )
 
     filtered_results = remove_metric_outliers(valid_results)
     final_result, final_metrics = choose_final_video_result(filtered_results)
@@ -1811,9 +1980,22 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
             "stableSeason": final_metrics.get("stableSeason"),
             "voteSeason": final_metrics.get("voteSeason"),
             "voteRatio": final_metrics.get("voteRatio"),
+            "dominantSeasonGroup": final_metrics.get("dominantSeasonGroup"),
+            "dominantSeasonGroupRatio": final_metrics.get("dominantSeasonGroupRatio"),
             "finalSeason": final_result["season"],
         },
         flush=True,
     )
 
-    return public_personal_color_result(final_result)
+    public = public_personal_color_result(final_result)
+    public["frameSummary"] = {
+        "frameCount": frame_count,
+        "selectedFrameCount": len(selected_files),
+        "validFrameCount": valid_frame_count,
+        "filteredFrameCount": len(filtered_results),
+        "skippedFrameCount": len(skipped_frames),
+        "skippedSummary": skipped_summary,
+        "dominantSeasonGroup": final_metrics.get("dominantSeasonGroup"),
+        "dominantSeasonGroupRatio": final_metrics.get("dominantSeasonGroupRatio"),
+    }
+    return public
