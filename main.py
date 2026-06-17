@@ -428,6 +428,8 @@ def stable_median_metrics(results):
             medians[field] = round(float(np.median(values)), 2)
 
     medians["contrastLevel"] = get_contrast_level(int(medians.get("contrastScore", 0)))
+    medians["tone"] = most_common_value([metrics.get("tone") for metrics in metrics_list], "neutral")
+    medians["seasonGroup"] = most_common_value([metrics.get("seasonGroup") for metrics in metrics_list])
     return medians
 
 
@@ -545,6 +547,7 @@ def get_active_color_profiles():
             "hairValue": profile["hair_value"],
             "eyeValue": profile["eye_value"],
             "tone": profile["tone"],
+            "season": season,
         }
         for season, profile in DEFAULT_PERSONAL_COLOR_PROFILES.items()
     }
@@ -561,7 +564,7 @@ def get_active_color_profiles():
             continue
 
         # 적은 샘플은 기본값을 더 믿고, 샘플이 쌓일수록 실제 데이터 비중을 올립니다.
-        sample_weight = min(0.75, sample_count / (sample_count + 15))
+        sample_weight = min(0.25, sample_count / (sample_count + 30))
         default_weight = 1 - sample_weight
         blended_profile = default_profiles[season].copy()
 
@@ -611,6 +614,7 @@ def profile_distance(metrics, profile):
 
     metric_tone = metrics.get("tone")
     profile_tone = profile.get("tone")
+    season = profile.get("season")
     weighted_lab_b = float(metrics.get("weightedLabB", 133.5))
 
     if metric_tone == "warm" and profile_tone == "cool":
@@ -622,6 +626,14 @@ def profile_distance(metrics, profile):
             score += 2
         elif weighted_lab_b < 133.5 and profile_tone == "warm":
             score += 2
+
+    if season == "spring-bright":
+        if float(metrics.get("weightedSaturation", 0)) < 82:
+            score += 10
+        if float(metrics.get("skinFeatureGap", 0)) < 75:
+            score += 8
+        if weighted_lab_b < 138.5:
+            score += 8
 
     return round(score, 2)
 
@@ -917,6 +929,10 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
     forehead_saturation = forehead["hsv"]["s"]
     nose_saturation = nose["hsv"]["s"]
     chin_saturation = chin["hsv"]["s"]
+    base_skin_saturation = adaptive_info.get("baseSkinSaturation", 0)
+    base_lab_b_values = [forehead["lab"]["b"], nose["lab"]["b"], chin["lab"]["b"]]
+    base_lab_b = float(np.median(base_lab_b_values))
+    lab_b_spread = max(base_lab_b_values + [cheek_lab_b]) - min(base_lab_b_values + [cheek_lab_b])
 
     warmth_score = (
         (weighted_lab_b - 133.5) * 2.2
@@ -924,10 +940,23 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         + (cheek_saturation - 35) * 0.05
     )
 
-    if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0:
+    indoor_mixed_light = (
+        weighted_lab_b >= 137.5
+        and lab_b_spread >= 3.0
+        and cheek_saturation >= base_skin_saturation + 20
+        and 180 <= weighted_skin_color["hsv"]["v"] <= 215
+        and 45 <= weighted_saturation <= 75
+    )
+
+    if (
+        weighted_lab_b >= 138.5
+        and cheek_lab_b >= 138.0
+        and warmth_score >= 8
+        and not indoor_mixed_light
+    ):
         tone = "warm"
         tone_name = "웜톤"
-    elif weighted_lab_b <= 133.0 and cheek_lab_b <= 134.5:
+    elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
         tone = "cool"
         tone_name = "쿨톤"
     else:
@@ -939,14 +968,17 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
     elif tone == "cool":
         season_group = "winter" if weighted_saturation >= 50 and contrast_level in ["medium", "high"] else "summer"
     else:
-        if weighted_lab_b >= 134.8 and weighted_lightness >= 160:
-            season_group = "spring"
-        elif contrast_level == "high" and weighted_saturation >= 48:
-            season_group = "winter"
-        elif weighted_saturation <= 42:
+        weighted_brightness = weighted_skin_color["hsv"]["v"]
+        if weighted_brightness >= 205 and weighted_saturation <= 55:
             season_group = "summer"
+        elif weighted_brightness >= 195 and weighted_saturation <= 70:
+            season_group = "summer"
+        elif contrast_level == "high" and weighted_saturation >= 72:
+            season_group = "winter"
+        elif weighted_lab_b >= 137.5 and warmth_score >= 5 and not indoor_mixed_light:
+            season_group = "spring"
         else:
-            season_group = "spring" if weighted_lab_b >= 134 else "summer"
+            season_group = "summer"
 
     return {
         "tone": tone,
@@ -957,6 +989,10 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         "weightedLightness": round(weighted_lightness, 2),
         "cheekSaturation": round(cheek_saturation, 2),
         "cheekLabB": round(cheek_lab_b, 2),
+        "baseSkinSaturation": round(float(base_skin_saturation), 2),
+        "baseLabB": round(base_lab_b, 2),
+        "labBSpread": round(float(lab_b_spread), 2),
+        "indoorMixedLight": indoor_mixed_light,
         "foreheadSaturation": round(forehead_saturation, 2),
         "noseSaturation": round(nose_saturation, 2),
         "chinSaturation": round(chin_saturation, 2),
@@ -1040,8 +1076,13 @@ def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_co
         "contrastLevel": contrast_level,
         "weightedLabB": region_analysis["weightedLabB"],
         "weightedSaturation": region_analysis["weightedSaturation"],
+        "weightedLightness": region_analysis["weightedLightness"],
         "cheekSaturation": region_analysis["cheekSaturation"],
         "cheekLabB": region_analysis["cheekLabB"],
+        "baseSkinSaturation": region_analysis["baseSkinSaturation"],
+        "baseLabB": region_analysis["baseLabB"],
+        "labBSpread": region_analysis["labBSpread"],
+        "indoorMixedLight": region_analysis["indoorMixedLight"],
         "foreheadSaturation": region_analysis["foreheadSaturation"],
         "noseSaturation": region_analysis["noseSaturation"],
         "chinSaturation": region_analysis["chinSaturation"],
@@ -1129,8 +1170,13 @@ def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color
                 "warmthScore": debug_metrics.get("warmthScore"),
                 "weightedLabB": debug_metrics.get("weightedLabB"),
                 "weightedSaturation": debug_metrics.get("weightedSaturation"),
+                "weightedLightness": debug_metrics.get("weightedLightness"),
                 "cheekSaturation": debug_metrics.get("cheekSaturation"),
                 "cheekLabB": debug_metrics.get("cheekLabB"),
+                "baseSkinSaturation": debug_metrics.get("baseSkinSaturation"),
+                "baseLabB": debug_metrics.get("baseLabB"),
+                "labBSpread": debug_metrics.get("labBSpread"),
+                "indoorMixedLight": debug_metrics.get("indoorMixedLight"),
                 "foreheadSaturation": debug_metrics.get("foreheadSaturation"),
                 "noseSaturation": debug_metrics.get("noseSaturation"),
                 "chinSaturation": debug_metrics.get("chinSaturation"),
@@ -1178,6 +1224,35 @@ def build_result_for_season(season, confidence):
     return result
 
 
+def is_true_spring_bright(metrics):
+    weighted_lab_b = float(metrics.get("weightedLabB", 133.5))
+    cheek_lab_b = float(metrics.get("cheekLabB", weighted_lab_b))
+    weighted_saturation = float(metrics.get("weightedSaturation", metrics.get("saturation", 0)))
+    brightness = float(metrics.get("brightness", 0))
+    lightness = float(metrics.get("lightness", metrics.get("weightedLightness", 0)))
+    skin_feature_gap = float(metrics.get("skinFeatureGap", 0))
+    warmth_score = float(metrics.get("warmthScore", 0))
+    tone = metrics.get("tone")
+
+    if tone is None:
+        if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0 and warmth_score >= 8:
+            tone = "warm"
+        elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
+            tone = "cool"
+        else:
+            tone = "neutral"
+
+    return (
+        tone == "warm"
+        and weighted_saturation >= 82
+        and skin_feature_gap >= 75
+        and brightness >= 200
+        and lightness >= 165
+        and weighted_lab_b >= 138.5
+        and cheek_lab_b >= 137.5
+    )
+
+
 def stable_classify_from_metrics(metrics):
     brightness = float(metrics.get("brightness", 0))
     saturation = float(metrics.get("saturation", 0))
@@ -1190,11 +1265,18 @@ def stable_classify_from_metrics(metrics):
     hair_value = float(metrics.get("hairValue", brightness))
     feature_darkness = float(metrics.get("featureDarkness", min(eye_value, hair_value)))
     skin_feature_gap = float(metrics.get("skinFeatureGap", max(0, brightness - feature_darkness)))
+    indoor_mixed_light = bool(metrics.get("indoorMixedLight", False))
+    warmth_score = float(metrics.get("warmthScore", 0))
 
     # 웜/쿨 판정 범위를 넓혀 neutral 구간 축소
-    if weighted_lab_b >= 137.0 and cheek_lab_b >= 136.5:
+    if (
+        weighted_lab_b >= 138.5
+        and cheek_lab_b >= 138.0
+        and warmth_score >= 8
+        and not indoor_mixed_light
+    ):
         tone = "warm"
-    elif weighted_lab_b <= 135.0 and cheek_lab_b <= 136.0:
+    elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
         tone = "cool"
     else:
         tone = "neutral"
@@ -1215,18 +1297,20 @@ def stable_classify_from_metrics(metrics):
     winter_feature = feature_darkness <= 55 and is_high_contrast
 
     # neutral을 웜/쿨 기울기로 분리
-    warmth_score = float(metrics.get("warmthScore", 0))
     has_medium_warm_signal = (
-        weighted_lab_b >= 136.8
-        and cheek_lab_b >= 136
+        weighted_lab_b >= 137.5
+        and cheek_lab_b >= 137
         and warmth_score >= 5
+        and not indoor_mixed_light
     )
     has_strong_warm_signal = (
-        weighted_lab_b >= 138
-        and cheek_lab_b >= 137
+        weighted_lab_b >= 138.5
+        and cheek_lab_b >= 138.0
         and warmth_score >= 8
+        and not indoor_mixed_light
     )
-    warm_leaning = weighted_lab_b >= 136.0 and warmth_score >= 2
+    warm_leaning = weighted_lab_b >= 137.5 and cheek_lab_b >= 137.0 and warmth_score >= 5 and not indoor_mixed_light
+    true_spring_bright = is_true_spring_bright({**metrics, "tone": tone})
     strong_autumn_condition = (
         has_strong_warm_signal
         and brightness < 170
@@ -1251,22 +1335,22 @@ def stable_classify_from_metrics(metrics):
     if tone == "neutral":
         if warm_leaning:
             # 웜 기울기 neutral → 봄/가을
-            if is_vivid:
-                season = "spring-bright"
-            elif is_light:
+            if is_light and weighted_saturation <= 55:
                 season = "spring-light"
+            elif brightness >= 195 and weighted_saturation <= 70:
+                season = "spring-soft"
             elif strong_autumn_condition:
                 season = "autumn-mute"
             else:
-                season = "spring-soft"
+                season = "summer-mute"
         else:
             # 쿨 기울기 neutral → 여름/겨울
             if bright_winter_condition:
                 season = "winter-bright"
-            elif is_light:
+            elif brightness >= 205 and weighted_saturation <= 55:
                 season = "summer-light"
-            elif strong_winter_condition:
-                season = "winter-deep"
+            elif brightness >= 195 and weighted_saturation <= 70:
+                season = "summer-mute"
             else:
                 season = "summer-mute"
     elif tone == "warm":
@@ -1275,9 +1359,9 @@ def stable_classify_from_metrics(metrics):
         elif strong_autumn_condition or muted_autumn_condition:
             # 어두운 웜 → 가을 계열 (채도 무관하게 먼저 체크)
             season = "autumn-mute"
-        elif is_vivid:
+        elif true_spring_bright:
             season = "spring-bright"
-        elif is_light:
+        elif is_light and weighted_saturation <= 55:
             season = "spring-light"
         else:
             season = "spring-soft"
@@ -1373,6 +1457,9 @@ def choose_final_video_result(filtered_results):
         final_season = vote_season
     else:
         final_season = stable_result["season"]
+
+    if final_season == "spring-bright" and not is_true_spring_bright(final_metrics):
+        final_season = "spring-soft"
 
     final_metrics["stableSeason"] = stable_result["season"]
     final_metrics["voteSeason"] = vote_season
@@ -1986,6 +2073,23 @@ async def diagnosis_video(files: list[UploadFile] = File(...)):
         },
         flush=True,
     )
+    if final_result["season"] == "spring-bright":
+        print(
+            "[diagnosis/video/spring-bright-debug]",
+            {
+                "weightedLabB": final_metrics.get("weightedLabB"),
+                "cheekLabB": final_metrics.get("cheekLabB"),
+                "weightedSaturation": final_metrics.get("weightedSaturation"),
+                "brightness": final_metrics.get("brightness"),
+                "lightness": final_metrics.get("lightness"),
+                "skinFeatureGap": final_metrics.get("skinFeatureGap"),
+                "tone": final_metrics.get("tone"),
+                "stableSeason": final_metrics.get("stableSeason"),
+                "voteSeason": final_metrics.get("voteSeason"),
+                "finalSeason": final_result["season"],
+            },
+            flush=True,
+        )
 
     public = public_personal_color_result(final_result)
     public["frameSummary"] = {
