@@ -146,15 +146,17 @@ DEFAULT_PERSONAL_COLOR_PROFILES = {
     # 한국인 기준 보정:
     # 1. 흑발/흑안으로 contrastScore가 항상 70~100 → 서브타입 간 contrast 프로필을 한국인 실측 범위로 통일
     # 2. 봄/여름 서브타입은 포화도·밝기로 구분, hair/eye는 계절 간 구분에만 활용
-    "spring-light": {"tone": "warm", "value": 215, "saturation": 52, "lightness": 182, "chroma": 18, "warmth": 13, "contrast": 76, "hair_value": 82, "eye_value": 65},
-    "spring-bright": {"tone": "warm", "value": 210, "saturation": 80, "lightness": 174, "chroma": 32, "warmth": 16, "contrast": 80, "hair_value": 80, "eye_value": 62},
-    "spring-soft": {"tone": "warm", "value": 200, "saturation": 48, "lightness": 167, "chroma": 14, "warmth": 11, "contrast": 76, "hair_value": 82, "eye_value": 65},
-    "autumn-mute": {"tone": "warm", "value": 178, "saturation": 42, "lightness": 152, "chroma": 16, "warmth": 14, "contrast": 72, "hair_value": 75, "eye_value": 60},
-    "autumn-deep": {"tone": "warm", "value": 148, "saturation": 58, "lightness": 128, "chroma": 26, "warmth": 20, "contrast": 88, "hair_value": 40, "eye_value": 32},
-    "summer-light": {"tone": "cool", "value": 210, "saturation": 36, "lightness": 180, "chroma": 11, "warmth": 4, "contrast": 74, "hair_value": 82, "eye_value": 65},
-    "summer-mute": {"tone": "cool", "value": 185, "saturation": 28, "lightness": 160, "chroma": 10, "warmth": 1, "contrast": 72, "hair_value": 80, "eye_value": 63},
-    "winter-bright": {"tone": "cool", "value": 208, "saturation": 68, "lightness": 168, "chroma": 28, "warmth": -8, "contrast": 88, "hair_value": 50, "eye_value": 40},
-    "winter-deep": {"tone": "cool", "value": 145, "saturation": 58, "lightness": 120, "chroma": 26, "warmth": -10, "contrast": 92, "hair_value": 30, "eye_value": 22},
+    # lipSkinLabBDiff: 입술 LAB b - 피부 LAB b 상대값 (보정 필요 없는 방향 신호)
+    # 웜톤: 입술이 피부보다 코랄/살구(+), 쿨톤: 피부보다 핑크/모브(-)
+    "spring-light": {"tone": "warm", "value": 215, "saturation": 52, "lightness": 182, "chroma": 18, "warmth": 13, "contrast": 76, "hair_value": 82, "eye_value": 65, "lipSkinLabBDiff": 10},
+    "spring-bright": {"tone": "warm", "value": 210, "saturation": 80, "lightness": 174, "chroma": 32, "warmth": 16, "contrast": 80, "hair_value": 80, "eye_value": 62, "lipSkinLabBDiff": 12},
+    "spring-soft": {"tone": "warm", "value": 200, "saturation": 48, "lightness": 167, "chroma": 14, "warmth": 11, "contrast": 76, "hair_value": 82, "eye_value": 65, "lipSkinLabBDiff": 8},
+    "autumn-mute": {"tone": "warm", "value": 178, "saturation": 42, "lightness": 152, "chroma": 16, "warmth": 14, "contrast": 72, "hair_value": 75, "eye_value": 60, "lipSkinLabBDiff": 5},
+    "autumn-deep": {"tone": "warm", "value": 148, "saturation": 58, "lightness": 128, "chroma": 26, "warmth": 20, "contrast": 88, "hair_value": 40, "eye_value": 32, "lipSkinLabBDiff": 3},
+    "summer-light": {"tone": "cool", "value": 210, "saturation": 36, "lightness": 180, "chroma": 11, "warmth": 4, "contrast": 74, "hair_value": 82, "eye_value": 65, "lipSkinLabBDiff": -3},
+    "summer-mute": {"tone": "cool", "value": 185, "saturation": 28, "lightness": 160, "chroma": 10, "warmth": 1, "contrast": 72, "hair_value": 80, "eye_value": 63, "lipSkinLabBDiff": -5},
+    "winter-bright": {"tone": "cool", "value": 208, "saturation": 68, "lightness": 168, "chroma": 28, "warmth": -8, "contrast": 88, "hair_value": 50, "eye_value": 40, "lipSkinLabBDiff": -8},
+    "winter-deep": {"tone": "cool", "value": 145, "saturation": 58, "lightness": 120, "chroma": 26, "warmth": -10, "contrast": 92, "hair_value": 30, "eye_value": 22, "lipSkinLabBDiff": -10},
 }
 
 
@@ -266,6 +268,9 @@ def average_debug_metrics(results):
         "cheekLabB",
         "hairValue",
         "eyeValue",
+        "lipLabB",
+        "lipSkinLabBDiff",
+        "lipSaturation",
     ]
     averaged = {}
     metrics_list = [result.get("debugMetrics", {}) for result in results]
@@ -588,7 +593,7 @@ def get_active_color_profiles():
 def profile_distance(metrics, profile):
     # 모든 분류를 같은 metric vector 거리 비교로 처리합니다.
     # brightness/saturation/contrast가 과하게 지배하지 않도록 낮추고,
-    # 한국인 피부에서 중요한 LAB b 기반 warm/cool 축과 눈/눈썹 특징을 더 크게 반영합니다.
+    # 한국인 피부에서 중요한 LAB b 기반 warm/cool 축과 눈/눈썹/입술 특징을 반영합니다.
     weights = {
         "brightness": 0.10,
         "saturation": 0.08,
@@ -602,6 +607,7 @@ def profile_distance(metrics, profile):
         "cheekLabB": 0.22,
         "hairValue": 0.02,
         "eyeValue": 0.03,
+        "lipSkinLabBDiff": 0.06,
     }
 
     score = 0.0
@@ -610,7 +616,11 @@ def profile_distance(metrics, profile):
         if field not in profile:
             continue
 
-        score += abs(float(metrics.get(field, 0)) - float(profile[field])) * weight
+        metric_val = metrics.get(field)
+        if metric_val is None:
+            continue  # 입술 등 추출 실패 시 해당 지표 건너뜀
+
+        score += abs(float(metric_val) - float(profile[field])) * weight
 
     metric_tone = metrics.get("tone")
     profile_tone = profile.get("tone")
@@ -665,6 +675,15 @@ def filter_pixels_for_region(pixels, region="default"):
     elif region == "eyebrow":
         threshold = min(150, int(np.percentile(value, 45)) + 20)
         mask = (value <= threshold) & ~((value >= 175) & (saturation <= 45))
+    elif region == "lip":
+        ycrcb_pixels = cv2.cvtColor(pixels.reshape(-1, 1, 3), cv2.COLOR_BGR2YCrCb).reshape(-1, 3)
+        cr = ycrcb_pixels[:, 1]
+        mask = (
+            (value >= 50)
+            & (value <= 235)
+            & (cr >= 138)
+            & ~((value >= 210) & (saturation <= 20))
+        )
     else:
         mask = (value >= 10) & (value <= 250)
 
@@ -687,9 +706,10 @@ def get_dominant_color_by_kmeans(image, points=None, roi=None, k=3, region="defa
         if cropped.size == 0:
             return None
 
-        shifted_points = points - np.array([x1, y1])
+        hull = cv2.convexHull(points)
+        shifted_hull = hull - np.array([[[x1, y1]]])
         mask = np.zeros(cropped.shape[:2], dtype=np.uint8)
-        cv2.fillConvexPoly(mask, shifted_points, 255)
+        cv2.fillConvexPoly(mask, shifted_hull.squeeze(1), 255)
         pixels = cropped[mask == 255]
     elif roi is not None:
         x1, y1, x2, y2 = roi
@@ -836,15 +856,20 @@ def calculate_adaptive_skin_color(region_colors):
     forehead = region_colors.get("foreheadColor")
     chin = region_colors.get("chinColor")
     nose = region_colors.get("noseColor")
+    left_jaw = region_colors.get("leftJawColor")
+    right_jaw = region_colors.get("rightJawColor")
 
+    # 페이스 보드 가중치: 볼(0.40) + 이마(0.18) + 턱(0.12) + 코(0.12) + 턱선(0.18)
     default_weights = {
-        "leftCheekColor": 0.25,
-        "rightCheekColor": 0.25,
-        "foreheadColor": 0.20,
-        "chinColor": 0.15,
-        "noseColor": 0.15,
+        "leftCheekColor": 0.20,
+        "rightCheekColor": 0.20,
+        "foreheadColor": 0.18,
+        "chinColor": 0.12,
+        "noseColor": 0.12,
+        "leftJawColor": 0.09,
+        "rightJawColor": 0.09,
     }
-    base_regions = [color for color in [forehead, nose, chin] if color]
+    base_regions = [color for color in [forehead, nose, chin, left_jaw, right_jaw] if color]
     cheek_regions = [color for color in [left_cheek, right_cheek] if color]
     base_saturations = [color["hsv"]["s"] for color in base_regions]
     cheek_saturations = [color["hsv"]["s"] for color in cheek_regions]
@@ -860,15 +885,26 @@ def calculate_adaptive_skin_color(region_colors):
     )
     weights = default_weights.copy()
 
+    # 턱선 그림자 감지: 볼보다 20 이상 어두우면 그림자로 판단, 가중치 절반
+    cheek_brightness = (
+        sum(c["hsv"]["v"] for c in cheek_regions) / len(cheek_regions)
+        if cheek_regions else 0.0
+    )
+    for jaw_key, jaw_color in [("leftJawColor", left_jaw), ("rightJawColor", right_jaw)]:
+        if jaw_color and cheek_brightness > 0:
+            if jaw_color["hsv"]["v"] < cheek_brightness - 20:
+                weights[jaw_key] *= 0.5
+
     if cheek_saturation > base_skin_saturation + 25:
         original_cheek_total = weights["leftCheekColor"] + weights["rightCheekColor"]
         weights["leftCheekColor"] *= 0.58
         weights["rightCheekColor"] *= 0.58
         released_weight = original_cheek_total - weights["leftCheekColor"] - weights["rightCheekColor"]
-        base_weight_total = weights["foreheadColor"] + weights["chinColor"] + weights["noseColor"]
+        base_keys = ["foreheadColor", "chinColor", "noseColor", "leftJawColor", "rightJawColor"]
+        base_weight_total = sum(weights[k] for k in base_keys)
 
         if base_weight_total > 0:
-            for key in ["foreheadColor", "chinColor", "noseColor"]:
+            for key in base_keys:
                 weights[key] += released_weight * (weights[key] / base_weight_total)
 
     skin_color, final_weights = weighted_color_from_regions([
@@ -877,6 +913,8 @@ def calculate_adaptive_skin_color(region_colors):
         ("foreheadColor", forehead, weights["foreheadColor"]),
         ("chinColor", chin, weights["chinColor"]),
         ("noseColor", nose, weights["noseColor"]),
+        ("leftJawColor", left_jaw, weights["leftJawColor"]),
+        ("rightJawColor", right_jaw, weights["rightJawColor"]),
     ])
 
     return skin_color, {
@@ -904,7 +942,7 @@ def calculate_feature_contrast(skin_color, eye_color=None, hair_color=None):
     }
 
 
-def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None, dominant_colors=None, contrast_level="low"):
+def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None, dominant_colors=None, contrast_level="low", lip_color=None):
     dominant_colors = dominant_colors or {}
     left_cheek = dominant_colors.get("leftCheekColor") or skin_color
     right_cheek = dominant_colors.get("rightCheekColor") or skin_color
@@ -917,6 +955,8 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         "foreheadColor": forehead,
         "chinColor": chin,
         "noseColor": nose,
+        "leftJawColor": dominant_colors.get("leftJawColor"),
+        "rightJawColor": dominant_colors.get("rightJawColor"),
     }
     adaptive_skin_color, adaptive_info = calculate_adaptive_skin_color(region_colors)
     weighted_skin_color = adaptive_skin_color or skin_color
@@ -934,10 +974,18 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
     base_lab_b = float(np.median(base_lab_b_values))
     lab_b_spread = max(base_lab_b_values + [cheek_lab_b]) - min(base_lab_b_values + [cheek_lab_b])
 
+    # 입술 LAB b: 절대값 대신 피부와의 차이(상대값)로 warm/cool 신호 계산
+    # 웜톤: 입술이 피부보다 노랗고 코랄함(양수), 쿨톤: 피부보다 파랗고 핑크(음수)
+    # 이 방식은 개인 피부 밝기 차이를 자동 보정하므로 보정값 없이도 작동
+    lip_lab_b = lip_color["lab"]["b"] if lip_color else None
+    lip_skin_lab_b_diff = (float(lip_lab_b) - weighted_lab_b) if lip_lab_b is not None else None
+    lip_warmth_contribution = lip_skin_lab_b_diff * 0.15 if lip_skin_lab_b_diff is not None else 0.0
+
     warmth_score = (
         (weighted_lab_b - 133.5) * 2.2
         + (cheek_lab_b - 135) * 1.0
         + (cheek_saturation - 35) * 0.05
+        + lip_warmth_contribution
     )
 
     indoor_mixed_light = (
@@ -1000,6 +1048,9 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         "finalSkinWeights": adaptive_info["finalSkinWeights"],
         "adaptiveSkinColor": weighted_skin_color,
         "seasonGroup": season_group,
+        "lipLabB": round(float(lip_lab_b), 2) if lip_lab_b is not None else None,
+        "lipSkinLabBDiff": round(float(lip_skin_lab_b_diff), 2) if lip_skin_lab_b_diff is not None else None,
+        "lipSaturation": round(float(lip_color["hsv"]["s"]), 2) if lip_color else None,
     }
 
 
@@ -1038,7 +1089,7 @@ def build_analysis_reason(result, skin_hsv, eye_color, hair_color, contrast_scor
     return f"뺨, 눈동자, 눈썹 대표색과 대비감이 경계에 가까워 가장 가까운 퍼스널 컬러 타입으로 판단했습니다.{metric_summary}"
 
 
-def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_color=None, eyebrow_color=None, dominant_colors=None):
+def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_color=None, eyebrow_color=None, dominant_colors=None, lip_color=None):
     lab = rgb_to_lab(avg_r, avg_g, avg_b)
     hsv = rgb_to_hsv(avg_r, avg_g, avg_b)
     skin_color = make_color(avg_r, avg_g, avg_b)
@@ -1054,6 +1105,7 @@ def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_co
         eyebrow_color=eyebrow_color,
         dominant_colors=dominant_colors,
         contrast_level=contrast_level,
+        lip_color=lip_color,
     )
     tone = region_analysis["tone"]
     tone_name = region_analysis["toneName"]
@@ -1092,6 +1144,9 @@ def build_debug_metrics_from_colors(avg_r, avg_g, avg_b, eye_color=None, hair_co
         "skinFeatureGap": feature_contrast["skinFeatureGap"],
         "adjustedCheekWeight": region_analysis["adjustedCheekWeight"],
         "finalSkinWeights": region_analysis["finalSkinWeights"],
+        "lipLabB": region_analysis["lipLabB"],
+        "lipSkinLabBDiff": region_analysis["lipSkinLabBDiff"],
+        "lipSaturation": region_analysis["lipSaturation"],
     }
     debug_metrics["stableSeason"] = stable_classify_from_metrics(debug_metrics)["season"]
     debug_metrics["voteSeason"] = None
@@ -1267,8 +1322,10 @@ def stable_classify_from_metrics(metrics):
     skin_feature_gap = float(metrics.get("skinFeatureGap", max(0, brightness - feature_darkness)))
     indoor_mixed_light = bool(metrics.get("indoorMixedLight", False))
     warmth_score = float(metrics.get("warmthScore", 0))
+    lip_skin_diff = metrics.get("lipSkinLabBDiff")  # None이면 립스틱 감지 또는 추출 실패
 
-    # 웜/쿨 판정 범위를 넓혀 neutral 구간 축소
+    # 웜/쿨 판정은 피부(weighted_lab_b, cheek_lab_b, warmth_score)만 사용
+    # 입술 색은 립스틱에 취약하므로 tone 판정에 직접 관여시키지 않음
     if (
         weighted_lab_b >= 138.5
         and cheek_lab_b >= 138.0
@@ -1309,7 +1366,13 @@ def stable_classify_from_metrics(metrics):
         and warmth_score >= 8
         and not indoor_mixed_light
     )
-    warm_leaning = weighted_lab_b >= 137.5 and cheek_lab_b >= 137.0 and warmth_score >= 5 and not indoor_mixed_light
+    # 입술 warm 신호: 피부보다 코랄/살구(diff ≥ 6)일 때만 보조 역할
+    # lip_skin_diff 사용 — 절대값이 아니라 피부 대비 상대값이라 보정 불필요
+    lip_warm_signal = lip_skin_diff is not None and float(lip_skin_diff) >= 6
+    warm_leaning = (
+        (weighted_lab_b >= 137.5 and cheek_lab_b >= 137.0 and warmth_score >= 5 and not indoor_mixed_light)
+        or (lip_warm_signal and weighted_lab_b >= 137.0 and cheek_lab_b >= 136.5 and warmth_score >= 4 and not indoor_mixed_light)
+    )
     true_spring_bright = is_true_spring_bright({**metrics, "tone": tone})
     strong_autumn_condition = (
         has_strong_warm_signal
@@ -1643,6 +1706,25 @@ def extract_eyebrow_color(image, landmarks, width, height):
     return make_color(avg_r, avg_g, avg_b)
 
 
+def extract_lip_color(image, landmarks, width, height):
+    # 외곽 입술 윤곽 landmark (MediaPipe Face Mesh 기준)
+    outer_lip_indices = [
+        61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291,
+        375, 321, 405, 314, 17, 84, 181, 91, 146,
+    ]
+    if len(landmarks) <= max(outer_lip_indices):
+        return None
+
+    points = landmark_points(landmarks, outer_lip_indices, width, height)
+    color = get_dominant_color_by_kmeans(image, points=points, k=3, region="lip")
+    if color is None:
+        return None
+    # 립스틱 감지: 자연 입술 채도는 HSV S ≤ 120, 이상이면 립스틱으로 판단하여 무시
+    if color["hsv"]["s"] > 120:
+        return None
+    return color
+
+
 def extract_hair_color(image, landmarks, width, height):
     xs = [int(point.x * width) for point in landmarks]
     ys = [int(point.y * height) for point in landmarks]
@@ -1724,41 +1806,66 @@ def is_valid_frame(image):
 
 
 def extract_skin_regions(image, landmarks, width, height):
-    left_cheek = landmarks[123]
-    right_cheek = landmarks[352]
-    forehead = landmarks[10]
-    chin = landmarks[152]
-    nose = landmarks[6]
+    # 페이스 보드: 이마, 양볼(polygon), 코, 턱, 턱선 7개 영역 샘플링
+    left_cheek_lm = landmarks[123]
+    right_cheek_lm = landmarks[352]
+    forehead_lm = landmarks[10]
+    chin_lm = landmarks[152]
+    nose_lm = landmarks[6]
+    left_jaw_lm = landmarks[172]   # MediaPipe 하악 외곽선 (왼쪽)
+    right_jaw_lm = landmarks[397]  # MediaPipe 하악 외곽선 (오른쪽)
 
-    left_x = int(left_cheek.x * width)
-    left_y = int(left_cheek.y * height)
-    right_x = int(right_cheek.x * width)
-    right_y = int(right_cheek.y * height)
-    forehead_x = int(forehead.x * width)
-    forehead_y = int(forehead.y * height)
-    chin_x = int(chin.x * width)
-    chin_y = int(chin.y * height)
-    nose_x = int(nose.x * width)
-    nose_y = int(nose.y * height)
+    left_x = int(left_cheek_lm.x * width)
+    left_y = int(left_cheek_lm.y * height)
+    right_x = int(right_cheek_lm.x * width)
+    right_y = int(right_cheek_lm.y * height)
+    forehead_x = int(forehead_lm.x * width)
+    forehead_y = int(forehead_lm.y * height)
+    chin_x = int(chin_lm.x * width)
+    chin_y = int(chin_lm.y * height)
+    nose_x = int(nose_lm.x * width)
+    nose_y = int(nose_lm.y * height)
+    left_jaw_x = int(left_jaw_lm.x * width)
+    left_jaw_y = int(left_jaw_lm.y * height)
+    right_jaw_x = int(right_jaw_lm.x * width)
+    right_jaw_y = int(right_jaw_lm.y * height)
+
     xs = [int(point.x * width) for point in landmarks]
     face_width = max(1, max(xs) - min(xs))
-    cheek_roi_size = scaled_roi_size(face_width, 0.055, min_size=22, max_size=55)
     forehead_roi_size = scaled_roi_size(face_width, 0.045, min_size=18, max_size=45)
     chin_roi_size = scaled_roi_size(face_width, 0.045, min_size=18, max_size=45)
     nose_roi_size = scaled_roi_size(face_width, 0.035, min_size=16, max_size=36)
+    jaw_roi_size = scaled_roi_size(face_width, 0.04, min_size=16, max_size=40)
+    cheek_roi_size = scaled_roi_size(face_width, 0.055, min_size=22, max_size=55)
+
+    # 볼 영역: polygon으로 넓은 뺨 영역 샘플링 (눈 외안각 36/266 제외 — 눈꺼풀 색 유입 방지)
+    left_cheek_poly_indices = [116, 117, 118, 119, 120, 100, 205, 206, 207, 187, 123, 50, 101]
+    right_cheek_poly_indices = [345, 346, 347, 348, 329, 425, 426, 427, 411, 352, 280, 330]
 
     left_color = get_dominant_color_by_kmeans(
+        image,
+        points=landmark_points(landmarks, left_cheek_poly_indices, width, height),
+        k=3,
+        region="skin",
+    ) or get_dominant_color_by_kmeans(
         image,
         roi=square_roi(left_x, left_y, cheek_roi_size, width, height),
         k=3,
         region="skin",
     ) or get_avg_color(image, left_x, left_y, size=cheek_roi_size)
+
     right_color = get_dominant_color_by_kmeans(
+        image,
+        points=landmark_points(landmarks, right_cheek_poly_indices, width, height),
+        k=3,
+        region="skin",
+    ) or get_dominant_color_by_kmeans(
         image,
         roi=square_roi(right_x, right_y, cheek_roi_size, width, height),
         k=3,
         region="skin",
     ) or get_avg_color(image, right_x, right_y, size=cheek_roi_size)
+
     forehead_color = get_dominant_color_by_kmeans(
         image,
         roi=square_roi(forehead_x, forehead_y, forehead_roi_size, width, height),
@@ -1777,6 +1884,18 @@ def extract_skin_regions(image, landmarks, width, height):
         k=3,
         region="skin",
     ) or get_avg_color(image, nose_x, nose_y, size=nose_roi_size)
+    left_jaw_color = get_dominant_color_by_kmeans(
+        image,
+        roi=square_roi(left_jaw_x, left_jaw_y, jaw_roi_size, width, height),
+        k=3,
+        region="skin",
+    ) or get_avg_color(image, left_jaw_x, left_jaw_y, size=jaw_roi_size)
+    right_jaw_color = get_dominant_color_by_kmeans(
+        image,
+        roi=square_roi(right_jaw_x, right_jaw_y, jaw_roi_size, width, height),
+        k=3,
+        region="skin",
+    ) or get_avg_color(image, right_jaw_x, right_jaw_y, size=jaw_roi_size)
 
     region_colors = {
         "leftCheekColor": left_color,
@@ -1784,6 +1903,8 @@ def extract_skin_regions(image, landmarks, width, height):
         "foreheadColor": forehead_color,
         "chinColor": chin_color,
         "noseColor": nose_color,
+        "leftJawColor": left_jaw_color,
+        "rightJawColor": right_jaw_color,
     }
     skin_color, _ = calculate_adaptive_skin_color(region_colors)
 
@@ -1794,9 +1915,11 @@ def extract_skin_regions(image, landmarks, width, height):
             "forehead": {"x": forehead_x, "y": forehead_y},
             "chin": {"x": chin_x, "y": chin_y},
             "nose": {"x": nose_x, "y": nose_y},
+            "leftJaw": {"x": left_jaw_x, "y": left_jaw_y},
+            "rightJaw": {"x": right_jaw_x, "y": right_jaw_y},
         },
         "colors": region_colors,
-        "averageSkinColor": skin_color or average_color(region_colors.values()),
+        "averageSkinColor": skin_color or average_color(list(region_colors.values())),
     }
 
 
@@ -1836,10 +1959,12 @@ def analyze_single_frame(image, include_debug=False, classify=True, fast_video=F
 
     eye_color = None if fast_video else extract_eye_color(image, landmarks, w, h)
     eyebrow_color = None if fast_video else extract_eyebrow_color(image, landmarks, w, h)
+    lip_color = None if fast_video else extract_lip_color(image, landmarks, w, h)
     hair_color = extract_hair_color(image, landmarks, w, h)
     dominant_colors.update({
         "eyeColor": eye_color,
         "eyebrowColor": eyebrow_color,
+        "lipColor": lip_color,
     })
     debug_metrics, _, avg_hsv, contrast_score, contrast_level = build_debug_metrics_from_colors(
         avg_r,
@@ -1849,6 +1974,7 @@ def analyze_single_frame(image, include_debug=False, classify=True, fast_video=F
         hair_color=hair_color,
         eyebrow_color=eyebrow_color,
         dominant_colors=dominant_colors,
+        lip_color=lip_color,
     )
     personal_color = {}
 
@@ -1884,6 +2010,7 @@ def analyze_single_frame(image, include_debug=False, classify=True, fast_video=F
         "noseColor": nose_color,
         "eyeColor": eye_color,
         "eyebrowColor": eyebrow_color,
+        "lipColor": lip_color,
         "hairColor": hair_color,
         "dominantColors": dominant_colors,
         "contrastScore": contrast_score,
