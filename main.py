@@ -700,18 +700,18 @@ def season_score_from_metrics(metrics, season, profile):
     high_contrast = skin_feature_gap >= 88 or feature_darkness <= 58
 
     if yellow_camera_cast or two_light_cast:
-        if season.startswith("spring") or season.startswith("autumn"):
+        # 노란 조명: 봄만 패널티 (가을은 웜이므로 패널티 없음)
+        if season.startswith("spring"):
             score += 3.0
         if season in ("summer-light", "summer-mute"):
             score -= 1.7
 
     if season.startswith("spring"):
-        if warm_signal and light_clear:
-            score -= 1.0
-        if not warm_signal or deep:
+        # 봄: strong_warm_signal 필요 — 노란 조명 2단위 버퍼 역할
+        if strong_warm_signal and light_clear:
+            score -= 2.0
+        if not strong_warm_signal or deep:
             score += 4.0
-        if warm_signal and not strong_warm_signal and not light_clear:
-            score += 1.5
     if season == "spring-light":
         if brightness >= 210 and lightness >= 178 and weighted_saturation <= 58:
             score -= 2.0
@@ -723,20 +723,20 @@ def season_score_from_metrics(metrics, season, profile):
         if weighted_saturation < 68 or skin_feature_gap < 70:
             score += 5.0
     elif season == "spring-soft":
-        if warm_signal and 190 <= brightness <= 208 and 38 <= weighted_saturation <= 58:
-            score -= 0.3
+        if strong_warm_signal and 190 <= brightness <= 208 and 38 <= weighted_saturation <= 58:
+            score -= 1.0
         if vivid or deep:
             score += 2.5
 
     if season.startswith("autumn"):
         if warm_signal and not light_clear:
             score -= 1.5
-        if not warm_signal or yellow_camera_cast or two_light_cast:
-            score += 4.0
+        if cool_signal:  # 쿨 신호 있을 때만 가을 패널티 (노란 조명에서 warm_signal 미감지 방지)
+            score += 5.0
     if season == "autumn-mute":
-        if warm_signal and 168 <= brightness <= 198 and lightness <= 166 and weighted_saturation <= 56:
+        if warm_signal and 168 <= brightness <= 202 and lightness <= 170 and weighted_saturation <= 58:
             score -= 3.0
-        if brightness >= 205:
+        if brightness >= 208:
             score += 3.0
     elif season == "autumn-deep":
         if strong_warm_signal and deep and high_contrast:
