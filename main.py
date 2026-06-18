@@ -632,9 +632,9 @@ def profile_distance(metrics, profile):
     elif metric_tone == "cool" and profile_tone == "warm":
         score += 10
     elif metric_tone == "neutral":
-        if weighted_lab_b >= 136.5 and profile_tone == "cool":
+        if weighted_lab_b >= 140.0 and profile_tone == "cool":
             score += 2
-        elif weighted_lab_b < 133.5 and profile_tone == "warm":
+        elif weighted_lab_b < 138.0 and profile_tone == "warm":
             score += 2
 
     if season == "spring-bright":
@@ -642,7 +642,7 @@ def profile_distance(metrics, profile):
             score += 10
         if float(metrics.get("skinFeatureGap", 0)) < 75:
             score += 8
-        if weighted_lab_b < 138.5:
+        if weighted_lab_b < 140.0:
             score += 8
 
     return round(score, 2)
@@ -997,14 +997,14 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
 
     # 노란 조명 보정: warm 임계값 상향, cool 임계값 상향으로 쿨톤 감지 강화
     if (
-        weighted_lab_b >= 140.0
-        and cheek_lab_b >= 139.5
-        and warmth_score >= 10
+        weighted_lab_b >= 140.5
+        and cheek_lab_b >= 140.0
+        and warmth_score >= 12
         and not indoor_mixed_light
     ):
         tone = "warm"
         tone_name = "웜톤"
-    elif weighted_lab_b <= 137.5 or cheek_lab_b <= 138.0:
+    elif weighted_lab_b <= 138.8 or cheek_lab_b <= 138.5:
         tone = "cool"
         tone_name = "쿨톤"
     else:
@@ -1023,7 +1023,12 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
             season_group = "summer"
         elif contrast_level == "high" and weighted_saturation >= 72:
             season_group = "winter"
-        elif weighted_lab_b >= 137.5 and warmth_score >= 5 and not indoor_mixed_light:
+        elif (
+            weighted_lab_b >= 140.0
+            and cheek_lab_b >= 139.5
+            and warmth_score >= 10
+            and not indoor_mixed_light
+        ):
             season_group = "spring"
         else:
             season_group = "summer"
@@ -1290,7 +1295,7 @@ def is_true_spring_bright(metrics):
     tone = metrics.get("tone")
 
     if tone is None:
-        if weighted_lab_b >= 138.5 and cheek_lab_b >= 138.0 and warmth_score >= 8:
+        if weighted_lab_b >= 140.0 and cheek_lab_b >= 139.5 and warmth_score >= 10:
             tone = "warm"
         elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
             tone = "cool"
@@ -1303,8 +1308,8 @@ def is_true_spring_bright(metrics):
         and skin_feature_gap >= 75
         and brightness >= 200
         and lightness >= 165
-        and weighted_lab_b >= 138.5
-        and cheek_lab_b >= 137.5
+        and weighted_lab_b >= 140.0
+        and cheek_lab_b >= 139.5
     )
 
 
@@ -1325,13 +1330,13 @@ def stable_classify_from_metrics(metrics):
 
     # 노란 조명 보정: warm 기준 상향, cool 기준 상향 (get_weighted_region_analysis와 일치)
     if (
-        weighted_lab_b >= 140.0
-        and cheek_lab_b >= 139.5
-        and warmth_score >= 10
+        weighted_lab_b >= 140.5
+        and cheek_lab_b >= 140.0
+        and warmth_score >= 12
         and not indoor_mixed_light
     ):
         tone = "warm"
-    elif weighted_lab_b <= 137.5 or cheek_lab_b <= 138.0:
+    elif weighted_lab_b <= 138.8 or cheek_lab_b <= 138.5:
         tone = "cool"
     else:
         tone = "neutral"
@@ -1353,22 +1358,22 @@ def stable_classify_from_metrics(metrics):
 
     # neutral을 웜/쿨 기울기로 분리 (노란 조명 보정으로 임계값 상향)
     has_medium_warm_signal = (
-        weighted_lab_b >= 139.0
-        and cheek_lab_b >= 138.5
-        and warmth_score >= 7
-        and not indoor_mixed_light
-    )
-    has_strong_warm_signal = (
         weighted_lab_b >= 140.0
         and cheek_lab_b >= 139.5
         and warmth_score >= 10
         and not indoor_mixed_light
     )
+    has_strong_warm_signal = (
+        weighted_lab_b >= 141.0
+        and cheek_lab_b >= 140.5
+        and warmth_score >= 13
+        and not indoor_mixed_light
+    )
     # 입술 신호 제거: 노란 조명 환경에서는 입술 보조 신호가 오히려 방해
     warm_leaning = (
-        weighted_lab_b >= 139.0
-        and cheek_lab_b >= 138.5
-        and warmth_score >= 7
+        weighted_lab_b >= 140.0
+        and cheek_lab_b >= 139.5
+        and warmth_score >= 10
         and not indoor_mixed_light
     )
     true_spring_bright = is_true_spring_bright({**metrics, "tone": tone})
