@@ -975,15 +975,14 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
     lab_b_spread = max(base_lab_b_values + [cheek_lab_b]) - min(base_lab_b_values + [cheek_lab_b])
 
     # 입술 LAB b: 절대값 대신 피부와의 차이(상대값)로 warm/cool 신호 계산
-    # 웜톤: 입술이 피부보다 노랗고 코랄함(양수), 쿨톤: 피부보다 파랗고 핑크(음수)
-    # 이 방식은 개인 피부 밝기 차이를 자동 보정하므로 보정값 없이도 작동
     lip_lab_b = lip_color["lab"]["b"] if lip_color else None
     lip_skin_lab_b_diff = (float(lip_lab_b) - weighted_lab_b) if lip_lab_b is not None else None
     lip_warmth_contribution = lip_skin_lab_b_diff * 0.15 if lip_skin_lab_b_diff is not None else 0.0
 
+    # 노란 조명 보정: 기준점을 133.5→135.5, 135→137로 올려 조명 편향 흡수
     warmth_score = (
-        (weighted_lab_b - 133.5) * 2.2
-        + (cheek_lab_b - 135) * 1.0
+        (weighted_lab_b - 135.5) * 2.2
+        + (cheek_lab_b - 137) * 1.0
         + (cheek_saturation - 35) * 0.05
         + lip_warmth_contribution
     )
@@ -996,15 +995,16 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         and 45 <= weighted_saturation <= 75
     )
 
+    # 노란 조명 보정: warm 임계값 상향, cool 임계값 상향으로 쿨톤 감지 강화
     if (
-        weighted_lab_b >= 138.5
-        and cheek_lab_b >= 138.0
-        and warmth_score >= 8
+        weighted_lab_b >= 140.0
+        and cheek_lab_b >= 139.5
+        and warmth_score >= 10
         and not indoor_mixed_light
     ):
         tone = "warm"
         tone_name = "웜톤"
-    elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
+    elif weighted_lab_b <= 137.5 or cheek_lab_b <= 138.0:
         tone = "cool"
         tone_name = "쿨톤"
     else:
@@ -1322,18 +1322,16 @@ def stable_classify_from_metrics(metrics):
     skin_feature_gap = float(metrics.get("skinFeatureGap", max(0, brightness - feature_darkness)))
     indoor_mixed_light = bool(metrics.get("indoorMixedLight", False))
     warmth_score = float(metrics.get("warmthScore", 0))
-    lip_skin_diff = metrics.get("lipSkinLabBDiff")  # None이면 립스틱 감지 또는 추출 실패
 
-    # 웜/쿨 판정은 피부(weighted_lab_b, cheek_lab_b, warmth_score)만 사용
-    # 입술 색은 립스틱에 취약하므로 tone 판정에 직접 관여시키지 않음
+    # 노란 조명 보정: warm 기준 상향, cool 기준 상향 (get_weighted_region_analysis와 일치)
     if (
-        weighted_lab_b >= 138.5
-        and cheek_lab_b >= 138.0
-        and warmth_score >= 8
+        weighted_lab_b >= 140.0
+        and cheek_lab_b >= 139.5
+        and warmth_score >= 10
         and not indoor_mixed_light
     ):
         tone = "warm"
-    elif weighted_lab_b <= 135.5 or cheek_lab_b <= 136.0:
+    elif weighted_lab_b <= 137.5 or cheek_lab_b <= 138.0:
         tone = "cool"
     else:
         tone = "neutral"
@@ -1349,63 +1347,66 @@ def stable_classify_from_metrics(metrics):
     is_bright = weighted_saturation >= 58 and skin_feature_gap >= 65
     is_light = brightness >= 208 and lightness >= 178
     is_low_contrast = skin_feature_gap < 55
-    is_muted = weighted_saturation < 42
+
     is_high_contrast = skin_feature_gap >= 90
     winter_feature = feature_darkness <= 55 and is_high_contrast
 
-    # neutral을 웜/쿨 기울기로 분리
+    # neutral을 웜/쿨 기울기로 분리 (노란 조명 보정으로 임계값 상향)
     has_medium_warm_signal = (
-        weighted_lab_b >= 137.5
-        and cheek_lab_b >= 137
-        and warmth_score >= 5
+        weighted_lab_b >= 139.0
+        and cheek_lab_b >= 138.5
+        and warmth_score >= 7
         and not indoor_mixed_light
     )
     has_strong_warm_signal = (
-        weighted_lab_b >= 138.5
-        and cheek_lab_b >= 138.0
-        and warmth_score >= 8
+        weighted_lab_b >= 140.0
+        and cheek_lab_b >= 139.5
+        and warmth_score >= 10
         and not indoor_mixed_light
     )
-    # 입술 warm 신호: 피부보다 코랄/살구(diff ≥ 6)일 때만 보조 역할
-    # lip_skin_diff 사용 — 절대값이 아니라 피부 대비 상대값이라 보정 불필요
-    lip_warm_signal = lip_skin_diff is not None and float(lip_skin_diff) >= 6
+    # 입술 신호 제거: 노란 조명 환경에서는 입술 보조 신호가 오히려 방해
     warm_leaning = (
-        (weighted_lab_b >= 137.5 and cheek_lab_b >= 137.0 and warmth_score >= 5 and not indoor_mixed_light)
-        or (lip_warm_signal and weighted_lab_b >= 137.0 and cheek_lab_b >= 136.5 and warmth_score >= 4 and not indoor_mixed_light)
+        weighted_lab_b >= 139.0
+        and cheek_lab_b >= 138.5
+        and warmth_score >= 7
+        and not indoor_mixed_light
     )
     true_spring_bright = is_true_spring_bright({**metrics, "tone": tone})
     strong_autumn_condition = (
         has_strong_warm_signal
-        and brightness < 170
-        and lightness < 150
+        and brightness < 180
+        and lightness < 158
     )
+    # 가을뮤트: 밝기 200 미만 + 채도 50 미만 (기존보다 완화)
     muted_autumn_condition = (
         has_medium_warm_signal
-        and is_muted
-        and weighted_saturation < 36
-        and brightness < 190
+        and weighted_saturation < 50
+        and brightness < 200
     )
     strong_winter_condition = (
         winter_feature
-        and (is_deep or weighted_saturation >= 62)
+        and (is_deep or weighted_saturation >= 55)
     )
+    # 겨울쿨브라이트: 채도 임계값 낮춰 더 많이 감지
     bright_winter_condition = (
-        weighted_saturation >= 72
+        weighted_saturation >= 62
         and is_high_contrast
-        and feature_darkness <= 60
+        and feature_darkness <= 65
     )
 
     if tone == "neutral":
         if warm_leaning:
             # 웜 기울기 neutral → 봄/가을
+            # 버그 수정: strong_autumn_condition은 neutral에서 절대 true가 안 됨(dead code)
+            # → 밝기+채도 기준으로 직접 판별
             if is_light and weighted_saturation <= 55:
                 season = "spring-light"
-            elif brightness >= 195 and weighted_saturation <= 70:
-                season = "spring-soft"
-            elif strong_autumn_condition:
+            elif brightness < 190 and weighted_saturation < 48:
                 season = "autumn-mute"
+            elif brightness >= 195:
+                season = "spring-soft"
             else:
-                season = "summer-mute"
+                season = "spring-soft"
         else:
             # 쿨 기울기 neutral → 여름/겨울
             if bright_winter_condition:
@@ -1420,7 +1421,6 @@ def stable_classify_from_metrics(metrics):
         if strong_autumn_condition and is_deep:
             season = "autumn-deep"
         elif strong_autumn_condition or muted_autumn_condition:
-            # 어두운 웜 → 가을 계열 (채도 무관하게 먼저 체크)
             season = "autumn-mute"
         elif true_spring_bright:
             season = "spring-bright"
