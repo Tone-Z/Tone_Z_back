@@ -665,13 +665,13 @@ def profile_distance(metrics, profile):
     autumn_like = is_autumn_mute_candidate(metrics) or is_autumn_deep_candidate(metrics)
     if autumn_like:
         if season == "autumn-mute":
-            score -= 5
+            score -= 2.5
         elif season == "autumn-deep":
-            score -= 3
+            score -= 2
         elif season and season.startswith("spring"):
-            score += 5
+            score += 2.5
         elif season and season.startswith("summer"):
-            score += 4
+            score += 2
 
     return round(score, 2)
 
@@ -1060,12 +1060,12 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
         tone_name = "뉴트럴"
 
     autumn_group_candidate = (
-        corrected_weighted_lab_b >= 137.4
-        and corrected_cheek_lab_b >= 136.9
-        and warmth_score >= 4.5
-        and 158 <= weighted_skin_color["hsv"]["v"] <= 204
-        and weighted_lightness <= 171
-        and weighted_saturation <= 60
+        corrected_weighted_lab_b >= 138.0
+        and corrected_cheek_lab_b >= 137.5
+        and warmth_score >= 6.0
+        and 162 <= weighted_skin_color["hsv"]["v"] <= 198
+        and weighted_lightness <= 164
+        and 30 <= weighted_saturation <= 54
     )
 
     if tone == "warm":
@@ -1073,8 +1073,10 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
             season_group = "autumn"
         elif weighted_lightness >= 172 and weighted_saturation >= 58 and not two_light_cast:
             season_group = "spring"
+        elif weighted_lightness >= 168 and weighted_saturation <= 55:
+            season_group = "spring"
         else:
-            season_group = "autumn"
+            season_group = "summer" if two_light_cast or indoor_mixed_light else "spring"
     elif tone == "cool":
         season_group = "winter" if weighted_saturation >= 50 and contrast_level in ["medium", "high"] else "summer"
     else:
@@ -1406,12 +1408,12 @@ def is_autumn_mute_candidate(metrics):
     warmth_score = float(metrics.get("warmthScore", 0))
 
     return (
-        weighted_lab_b >= 137.4
-        and cheek_lab_b >= 136.9
-        and warmth_score >= 4.5
-        and 158 <= brightness <= 204
-        and lightness <= 171
-        and weighted_saturation <= 60
+        weighted_lab_b >= 138.0
+        and cheek_lab_b >= 137.5
+        and warmth_score >= 6.0
+        and 162 <= brightness <= 198
+        and lightness <= 164
+        and 30 <= weighted_saturation <= 54
     )
 
 
@@ -1425,13 +1427,13 @@ def is_autumn_deep_candidate(metrics):
     warmth_score = float(metrics.get("warmthScore", 0))
 
     return (
-        weighted_lab_b >= 138.0
-        and cheek_lab_b >= 137.2
-        and warmth_score >= 5.5
+        weighted_lab_b >= 138.4
+        and cheek_lab_b >= 137.8
+        and warmth_score >= 7.0
         and brightness < 168
         and lightness < 152
         and skin_feature_gap >= 58
-        and weighted_saturation <= 72
+        and 38 <= weighted_saturation <= 72
     )
 
 
@@ -1589,9 +1591,9 @@ def stable_classify_from_metrics(metrics):
         elif spring_clear_signal:
             season = "spring-soft"
         elif yellow_camera_cast or two_light_cast:
-            season = "autumn-mute" if weighted_saturation <= 60 and brightness <= 204 else "summer-mute"
+            season = "summer-mute"
         else:
-            season = "autumn-mute"
+            season = "spring-soft" if weighted_lab_b >= 138.2 and warmth_score >= 6.0 else "summer-mute"
     else:
         # cool
         if strong_winter_condition and is_deep:
@@ -1688,9 +1690,17 @@ def choose_final_video_result(filtered_results):
     if final_season == "spring-bright" and not is_true_spring_bright(final_metrics):
         final_season = "spring-soft"
     if final_season.startswith(("spring", "summer")):
-        if is_autumn_deep_candidate(final_metrics):
+        final_weighted_lab_b = float(final_metrics.get("correctedWeightedLabB", final_metrics.get("weightedLabB", 133.5)))
+        final_cheek_lab_b = float(final_metrics.get("correctedCheekLabB", final_metrics.get("cheekLabB", final_weighted_lab_b)))
+        final_warmth_score = float(final_metrics.get("warmthScore", 0))
+        has_clear_autumn_signal = (
+            final_weighted_lab_b >= 138.4
+            and final_cheek_lab_b >= 137.8
+            and final_warmth_score >= 7.0
+        )
+        if has_clear_autumn_signal and is_autumn_deep_candidate(final_metrics):
             final_season = "autumn-deep"
-        elif is_autumn_mute_candidate(final_metrics):
+        elif has_clear_autumn_signal and is_autumn_mute_candidate(final_metrics):
             final_season = "autumn-mute"
 
     final_metrics["stableSeason"] = stable_result["season"]
