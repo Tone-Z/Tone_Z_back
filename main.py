@@ -676,6 +676,115 @@ def profile_distance(metrics, profile):
     return round(score, 2)
 
 
+def season_score_from_metrics(metrics, season, profile):
+    score = profile_distance(metrics, profile)
+    brightness = float(metrics.get("brightness", 0))
+    lightness = float(metrics.get("lightness", metrics.get("weightedLightness", 0)))
+    weighted_saturation = float(metrics.get("weightedSaturation", metrics.get("saturation", 0)))
+    warmth_score = float(metrics.get("warmthScore", 0))
+    weighted_lab_b = float(metrics.get("correctedWeightedLabB", metrics.get("weightedLabB", 133.5)))
+    cheek_lab_b = float(metrics.get("correctedCheekLabB", metrics.get("cheekLabB", weighted_lab_b)))
+    feature_darkness = float(metrics.get("featureDarkness", 255))
+    skin_feature_gap = float(metrics.get("skinFeatureGap", 0))
+    lighting_yellow_bias = float(metrics.get("lightingYellowBias", 0))
+    yellow_camera_cast = bool(metrics.get("yellowCameraCast", False))
+    two_light_cast = bool(metrics.get("twoLightCast", False)) or lighting_yellow_bias >= 0.8
+
+    warm_signal = weighted_lab_b >= 138.4 and cheek_lab_b >= 137.9 and warmth_score >= 5.8
+    strong_warm_signal = weighted_lab_b >= 139.2 and cheek_lab_b >= 138.6 and warmth_score >= 8.0
+    cool_signal = weighted_lab_b <= 137.4 or cheek_lab_b <= 137.2 or warmth_score <= 4.2
+    light_clear = brightness >= 204 and lightness >= 170
+    soft = weighted_saturation <= 52 and skin_feature_gap < 88
+    vivid = weighted_saturation >= 62
+    deep = brightness < 168 and lightness < 154
+    high_contrast = skin_feature_gap >= 88 or feature_darkness <= 58
+
+    if yellow_camera_cast or two_light_cast:
+        if season.startswith("spring") or season.startswith("autumn"):
+            score += 3.0
+        if season in ("summer-light", "summer-mute"):
+            score -= 1.5
+
+    if season.startswith("spring"):
+        if warm_signal and light_clear:
+            score -= 2.0
+        if not warm_signal or deep:
+            score += 4.0
+    if season == "spring-light":
+        if brightness >= 210 and lightness >= 178 and weighted_saturation <= 58:
+            score -= 2.0
+        if weighted_saturation > 64:
+            score += 2.0
+    elif season == "spring-bright":
+        if strong_warm_signal and vivid and high_contrast:
+            score -= 3.0
+        if weighted_saturation < 68 or skin_feature_gap < 70:
+            score += 5.0
+    elif season == "spring-soft":
+        if warm_signal and 190 <= brightness <= 208 and 38 <= weighted_saturation <= 58:
+            score -= 1.0
+        if vivid or deep:
+            score += 2.5
+
+    if season.startswith("autumn"):
+        if warm_signal and not light_clear:
+            score -= 1.5
+        if not warm_signal or yellow_camera_cast or two_light_cast:
+            score += 4.0
+    if season == "autumn-mute":
+        if warm_signal and 168 <= brightness <= 198 and lightness <= 166 and weighted_saturation <= 56:
+            score -= 3.0
+        if brightness >= 205:
+            score += 3.0
+    elif season == "autumn-deep":
+        if strong_warm_signal and deep and high_contrast:
+            score -= 3.0
+        if brightness >= 178 or lightness >= 164:
+            score += 4.0
+
+    if season.startswith("summer"):
+        if cool_signal and soft:
+            score -= 1.5
+        if strong_warm_signal and not yellow_camera_cast and not two_light_cast:
+            score += 4.0
+    if season == "summer-light":
+        if brightness >= 204 and lightness >= 174 and weighted_saturation <= 48:
+            score -= 2.5
+        if weighted_saturation > 58:
+            score += 2.0
+    elif season == "summer-mute":
+        if 176 <= brightness <= 204 and weighted_saturation <= 45 and not high_contrast:
+            score -= 2.0
+        if vivid or deep:
+            score += 2.5
+
+    if season.startswith("winter"):
+        if high_contrast and (cool_signal or vivid):
+            score -= 2.0
+        if not high_contrast:
+            score += 3.0
+    if season == "winter-bright":
+        if brightness >= 190 and vivid and high_contrast:
+            score -= 3.0
+        if weighted_saturation < 58:
+            score += 3.0
+    elif season == "winter-deep":
+        if deep and high_contrast:
+            score -= 3.0
+        if brightness >= 178 or feature_darkness > 70:
+            score += 4.0
+
+    return round(score, 2)
+
+
+def ranked_seasons_from_metrics(metrics):
+    profiles = get_active_color_profiles()
+    return sorted(
+        (season_score_from_metrics(metrics, season, profile), season)
+        for season, profile in profiles.items()
+    )
+
+
 def filter_pixels_for_region(pixels, region="default"):
     if pixels is None or len(pixels) == 0:
         return pixels
@@ -1246,12 +1355,7 @@ def classify_personal_color_from_metrics(debug_metrics, skin_hsv=None, eye_color
     best_season = stable["season"]
 
     profiles = get_active_color_profiles()
-    ranked_scores = sorted(
-        [
-            (profile_distance(debug_metrics, profile), season)
-            for season, profile in profiles.items()
-        ]
-    )
+    ranked_scores = ranked_seasons_from_metrics(debug_metrics)
 
     second_score = ranked_scores[1][0] if len(ranked_scores) > 1 else 20
     best_profile_score = next((s for s, n in ranked_scores if n == best_season), ranked_scores[0][0])
@@ -1550,60 +1654,15 @@ def stable_classify_from_metrics(metrics):
         and feature_darkness <= 65
     )
 
-    if tone == "neutral":
-        if autumn_deep_candidate:
-            season = "autumn-deep"
-        elif autumn_mute_candidate:
-            season = "autumn-mute"
-        elif warm_leaning:
-            # 웜 기울기 neutral → 봄/가을
-            # 버그 수정: strong_autumn_condition은 neutral에서 절대 true가 안 됨(dead code)
-            # → 밝기+채도 기준으로 직접 판별
-            if is_light and weighted_saturation <= 55 and spring_clear_signal:
-                season = "spring-light"
-            elif brightness < 190 and weighted_saturation < 48:
-                season = "autumn-mute"
-            elif spring_clear_signal:
-                season = "spring-soft"
-            elif yellow_camera_cast or two_light_cast:
-                season = "summer-mute"
-            else:
-                season = "summer-mute"
-        else:
-            # 쿨 기울기 neutral → 여름/겨울
-            if bright_winter_condition:
-                season = "winter-bright"
-            elif brightness >= 205 and weighted_saturation <= 55:
-                season = "summer-light"
-            elif brightness >= 195 and weighted_saturation <= 70:
-                season = "summer-mute"
-            else:
-                season = "summer-mute"
-    elif tone == "warm":
-        if autumn_deep_candidate or (strong_autumn_condition and is_deep):
-            season = "autumn-deep"
-        elif autumn_mute_candidate or strong_autumn_condition or muted_autumn_condition:
-            season = "autumn-mute"
-        elif true_spring_bright:
-            season = "spring-bright"
-        elif is_light and weighted_saturation <= 55 and spring_clear_signal:
-            season = "spring-light"
-        elif spring_clear_signal:
-            season = "spring-soft"
-        elif yellow_camera_cast or two_light_cast:
-            season = "summer-mute"
-        else:
-            season = "spring-soft" if weighted_lab_b >= 138.2 and warmth_score >= 6.0 else "summer-mute"
-    else:
-        # cool
-        if strong_winter_condition and is_deep:
-            season = "winter-deep"
-        elif bright_winter_condition:
-            season = "winter-bright"
-        elif is_light:
-            season = "summer-light"
-        else:
-            season = "summer-mute"
+    ranked_seasons = ranked_seasons_from_metrics({
+        **metrics,
+        "tone": tone,
+        "correctedWeightedLabB": weighted_lab_b,
+        "correctedCheekLabB": cheek_lab_b,
+        "yellowCameraCast": yellow_camera_cast,
+        "twoLightCast": two_light_cast,
+    })
+    season = ranked_seasons[0][1]
 
     confidence = 0.78
 
@@ -1643,7 +1702,7 @@ def majority_vote_season(results, tie_metrics):
     profiles = get_active_color_profiles()
     selected_season = min(
         tied_seasons,
-        key=lambda season: profile_distance(tie_metrics, profiles[season]),
+        key=lambda season: season_score_from_metrics(tie_metrics, season, profiles[season]),
     )
 
     return selected_season, max_count
@@ -1675,7 +1734,7 @@ def choose_final_video_result(filtered_results):
         ]
         profile_season = min(
             group_candidates,
-            key=lambda season: profile_distance(tie_metrics, profiles[season]),
+            key=lambda season: season_score_from_metrics(tie_metrics, season, profiles[season]),
         )
 
         if vote_season.split("-")[0] == dominant_group and vote_ratio >= 0.5:
