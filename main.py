@@ -703,13 +703,15 @@ def season_score_from_metrics(metrics, season, profile):
         if season.startswith("spring") or season.startswith("autumn"):
             score += 3.0
         if season in ("summer-light", "summer-mute"):
-            score -= 1.5
+            score -= 1.7
 
     if season.startswith("spring"):
         if warm_signal and light_clear:
-            score -= 2.0
+            score -= 1.0
         if not warm_signal or deep:
             score += 4.0
+        if warm_signal and not strong_warm_signal and not light_clear:
+            score += 1.5
     if season == "spring-light":
         if brightness >= 210 and lightness >= 178 and weighted_saturation <= 58:
             score -= 2.0
@@ -722,7 +724,7 @@ def season_score_from_metrics(metrics, season, profile):
             score += 5.0
     elif season == "spring-soft":
         if warm_signal and 190 <= brightness <= 208 and 38 <= weighted_saturation <= 58:
-            score -= 1.0
+            score -= 0.3
         if vivid or deep:
             score += 2.5
 
@@ -748,12 +750,14 @@ def season_score_from_metrics(metrics, season, profile):
         if strong_warm_signal and not yellow_camera_cast and not two_light_cast:
             score += 4.0
     if season == "summer-light":
-        if brightness >= 204 and lightness >= 174 and weighted_saturation <= 48:
+        if brightness >= 208 and lightness >= 176 and weighted_saturation <= 48:
             score -= 2.5
+        if brightness < 208 or lightness < 176:
+            score += 2.0
         if weighted_saturation > 58:
             score += 2.0
     elif season == "summer-mute":
-        if 176 <= brightness <= 204 and weighted_saturation <= 45 and not high_contrast:
+        if 176 <= brightness <= 204 and weighted_saturation <= 47 and not high_contrast:
             score -= 2.0
         if vivid or deep:
             score += 2.5
@@ -1161,7 +1165,7 @@ def get_weighted_region_analysis(skin_color, eye_color=None, eyebrow_color=None,
     ):
         tone = "warm"
         tone_name = "웜톤"
-    elif corrected_weighted_lab_b <= 137.2 or corrected_cheek_lab_b <= 137.0:
+    elif corrected_weighted_lab_b <= 137.3 or corrected_cheek_lab_b <= 137.1:
         tone = "cool"
         tone_name = "쿨톤"
     else:
@@ -1579,7 +1583,7 @@ def stable_classify_from_metrics(metrics):
         and not indoor_mixed_light
     ):
         tone = "warm"
-    elif weighted_lab_b <= 137.2 or cheek_lab_b <= 137.0:
+    elif weighted_lab_b <= 137.3 or cheek_lab_b <= 137.1:
         tone = "cool"
     else:
         tone = "neutral"
