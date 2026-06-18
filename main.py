@@ -778,6 +778,17 @@ def season_score_from_metrics(metrics, season, profile):
         if brightness >= 178 or feature_darkness > 70:
             score += 4.0
 
+    # 소량의 가을 페널티: 가을(웜톤) 분류가 약간 덜 나오도록 점수에 작은 페널티를 추가합니다.
+    AUTUMN_PENALTY = 0.8
+    if season.startswith("autumn"):
+        score += AUTUMN_PENALTY
+
+    # 소량의 겨울 페널티: 겨울(쿨톤) 분류가 약간 덜 나오도록 점수에 작은 페널티를 추가합니다.
+    # 값이 너무 크면 겨울 분류가 과도하게 사라질 수 있으니 작게 설정합니다.
+    WINTER_PENALTY = 1.2
+    if season.startswith("winter"):
+        score += WINTER_PENALTY
+
     return round(score, 2)
 
 
